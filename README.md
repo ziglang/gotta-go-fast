@@ -29,5 +29,6 @@ then the new commit being tested. Both data points are stored, and any graphs
 will show the change in time in relation to the fixed reference point.
 
 Measurements are directly stored and committed to this git repository, in CSV
-format. It is planned for new benchmarks to be added over time, and old
-benchmarks to be retired, however the data should remain available.
+format (with '💩' instead of ',' as the delimiter). It is planned for new
+benchmarks to be added over time, and old benchmarks to be retired, however the
+data should remain available.
