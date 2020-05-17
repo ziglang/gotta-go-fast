@@ -1,0 +1,8 @@
+{
+  "self-hosted-parser": {
+    "description": "walk std lib, parse, iterate nodes",
+    "kind": "zig-bench",
+    "baselineCommit": "16f100b82e4075a047f008c0de6c44fc418eb58e",
+    "mainPath": "self-hosted-parser/main.zig"
+  }
+}
