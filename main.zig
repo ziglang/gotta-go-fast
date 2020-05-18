@@ -1,6 +1,14 @@
 const std = @import("std");
+const fs = std.fs;
+const json = std.json;
+
+const Key = struct {
+    commit_hash: [20]u8,
+    benchmark_name: []const u8,
+};
 
 const Record = struct {
+    /// Use this to join the baseline commit against the commit being benchmarked.
     timestamp: u64,
     benchmark_name: []const u8,
     allocator: enum {
@@ -40,9 +48,11 @@ pub fn main() !void {
     std.debug.warn("Loading CSV data...\n", .{});
     var records = std.ArrayList(Record).init(gpa);
     defer records.deinit();
+    var commit_table = std.AutoHashMap(Key, usize).init(gpa);
+    defer commit_table.deinit();
 
     {
-        const csv_text = try std.fs.cwd().readFileAlloc(gpa, "records.csv", 2 * 1024 * 1024 * 1024);
+        const csv_text = try fs.cwd().readFileAlloc(gpa, "records.csv", 2 * 1024 * 1024 * 1024);
         defer gpa.free(csv_text);
 
         var field_indexes: [@typeInfo(Record).Struct.fields.len]usize = undefined;
@@ -81,26 +91,94 @@ pub fn main() !void {
             if (std.mem.eql(u8, line, "")) continue; // Skip blank lines.
             var it = std.mem.split(line, comma);
             var csv_index: usize = 0;
+            const record_index = records.items.len;
+            const record = try records.addOne();
             while (it.next()) |field| : (csv_index += 1) {
                 if (csv_index >= field_indexes.len) {
                     std.debug.warn("extra CSV field on line {}\n", .{line_index + 1});
                     std.process.exit(1);
                 }
-                const record = try records.addOne();
                 setRecordField(arena, record, field, field_indexes[csv_index]);
             }
             if (csv_index != field_indexes.len) {
                 std.debug.warn("CSV line {} missing a field\n", .{line_index + 1});
                 std.process.exit(1);
             }
+            const key: Key = .{
+                .commit_hash = record.commit_hash,
+                .benchmark_name = record.benchmark_name,
+            };
+            if (try commit_table.put(key, record_index)) |existing| {
+                const existing_record = records.items[existing.value];
+                if (existing_record.timestamp > record.timestamp) {
+                    _ = commit_table.putAssumeCapacity(key, existing.value);
+                }
+            }
         }
     }
 
-    while (true) {
-        // Detect changes to zig master branch
-        // TODO
+    var manifest_parser = json.Parser.init(gpa, false);
+    const manifest_text = try fs.cwd().readFileAlloc(gpa, "benchmarks/manifest.json", 3 * 1024 * 1024);
+    const manifest_tree = try manifest_parser.parse(manifest_text);
 
+    var queue = std.ArrayList([20]u8).init(gpa);
+    defer queue.deinit();
+
+    while (true) {
         // Detect queue.txt items
+        const queue_txt_path = "queue.txt";
+        if (fs.cwd().readFileAlloc(gpa, queue_txt_path, 1024 * 1024)) |queue_txt| {
+            defer gpa.free(queue_txt);
+            var it = std.mem.tokenize(queue_txt, " \r\n\t");
+            while (it.next()) |commit_txt| {
+                const commit = parseCommit(commit_txt) catch |err| {
+                    std.debug.warn("bad commit format: '{}': {}\n", .{ commit_txt, @errorName(err) });
+                    continue;
+                };
+                try queue.append(commit);
+            }
+        } else |err| {
+            std.debug.warn("unable to read {}: {}\n", .{ queue_txt_path, @errorName(err) });
+        }
+        // Eliminate the ones already done.
+        {
+            var queue_index: usize = 0;
+            while (queue_index < queue.items.len) {
+                const queue_commit = queue.items[queue_index];
+                var benchmarks_it = manifest_tree.root.Object.iterator();
+                const any_missing = while (benchmarks_it.next()) |kv| {
+                    const key: Key = .{
+                        .commit_hash = queue_commit,
+                        .benchmark_name = kv.key,
+                    };
+                    if (commit_table.get(key) == null) {
+                        break true;
+                    }
+                } else false;
+
+                if (!any_missing) {
+                    _ = queue.orderedRemove(queue_index);
+                    continue;
+                }
+                queue_index += 1;
+            }
+        }
+        {
+            const baf = try std.io.BufferedAtomicFile.create(gpa, fs.cwd(), queue_txt_path, .{});
+            defer baf.destroy();
+
+            const out = baf.stream();
+            for (queue.items) |commit| {
+                try out.print("{x}\n", .{commit});
+            }
+
+            try baf.finish();
+        }
+        for (queue.items) |queue_item| {
+            runBenchmarks(&records, &commit_table, queue_item);
+        }
+
+        // Detect changes to zig master branch
         // TODO
 
         // Run benchmarks, add records
@@ -151,19 +229,26 @@ fn setRecordFieldT(arena: *std.mem.Allocator, comptime T: type, ptr: *T, data: [
             ptr.* = arena.dupe(u8, data) catch @panic("out of memory");
         },
         [20]u8 => {
-            if (data.len != 40) {
-                std.debug.warn("wrong format for commit hash: '{}'", .{data});
+            ptr.* = parseCommit(data) catch |err| {
+                std.debug.warn("wrong format for commit hash: '{}': {}", .{ data, @errorName(err) });
                 std.process.exit(1);
-            }
-            var i: usize = 0;
-            while (i < 20) : (i += 1) {
-                const byte = std.fmt.parseInt(u8, data[i * 2 ..][0..2], 16) catch |err| {
-                    std.debug.warn("wrong format for commit hash: '{}'", .{data});
-                    std.process.exit(1);
-                };
-                ptr[i] = byte;
-            }
+            };
         },
         else => @compileError("no deserialization for " ++ @typeName(T)),
     }
+}
+
+fn parseCommit(text: []const u8) ![20]u8 {
+    var result: [20]u8 = undefined;
+    if (text.len != 40) {
+        return error.WrongSHALength;
+    }
+    var i: usize = 0;
+    while (i < 20) : (i += 1) {
+        const byte = std.fmt.parseInt(u8, text[i * 2 ..][0..2], 16) catch |err| {
+            return error.BadSHACharacter;
+        };
+        result[i] = byte;
+    }
+    return result;
 }
