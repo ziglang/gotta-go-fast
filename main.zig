@@ -37,6 +37,12 @@ const Record = struct {
         commit_hash: [20]u8,
         benchmark_name: []const u8,
         allocator: Record.WhichAllocator,
+
+        fn eql(self: Key, other: Key) bool {
+            return self.allocator == other.allocator and
+                std.mem.eql(u8, &self.commit_hash, &other.commit_hash) and
+                std.mem.eql(u8, self.benchmark_name, other.benchmark_name);
+        }
     };
 };
 
@@ -83,11 +89,17 @@ fn jsonToRecord(
     };
 }
 
+const records_csv_path = "records.csv";
 const comma = "💩";
 const zig_src_root = "zig-builds/src";
 const zig_src_build = "zig-builds/src/build";
 const zig_rel_bin = "../../zig-builds/src/build/zig";
-const CommitTable = std.AutoHashMap(Record.Key, usize);
+const CommitTable = std.HashMap(
+    Record.Key,
+    usize,
+    std.hash_map.getAutoHashStratFn(Record.Key, .Deep),
+    Record.Key.eql,
+);
 
 pub fn main() !void {
     const gpa = std.heap.page_allocator;
@@ -103,7 +115,7 @@ pub fn main() !void {
     defer commit_table.deinit();
 
     {
-        const csv_text = try fs.cwd().readFileAlloc(gpa, "records.csv", 2 * 1024 * 1024 * 1024);
+        const csv_text = try fs.cwd().readFileAlloc(gpa, records_csv_path, 2 * 1024 * 1024 * 1024);
         defer gpa.free(csv_text);
 
         var field_indexes: [@typeInfo(Record).Struct.fields.len]usize = undefined;
@@ -175,6 +187,8 @@ pub fn main() !void {
 
     var queue = std.ArrayList([20]u8).init(gpa);
     defer queue.deinit();
+
+    var last_time_slept = false;
 
     while (true) {
         queue.shrink(0);
@@ -255,14 +269,37 @@ pub fn main() !void {
         }
 
         if (records.items.len != prev_records_len) {
+            last_time_slept = false;
             // Save CSV
-            std.debug.warn("TODO save records.csv file\n", .{});
+            std.debug.warn("Updating {}...\n", .{records_csv_path});
+            {
+                const baf = try std.io.BufferedAtomicFile.create(gpa, fs.cwd(), records_csv_path, .{});
+                defer baf.destroy();
+
+                const out = baf.stream();
+                inline for (@typeInfo(Record).Struct.fields) |field, i| {
+                    if (i != 0) {
+                        try out.writeAll(comma);
+                    }
+                    try out.writeAll(field.name);
+                }
+                try out.writeAll("\n");
+                for (records.items) |record| {
+                    try writeCSVRecord(out, record);
+                    try out.writeAll("\n");
+                }
+
+                try baf.finish();
+            }
 
             // Commit CSV changes to git and push
             std.debug.warn("TODO commit changes to records.csv and git push\n", .{});
         } else {
-            // "On the seventh day, God rested."
+            if (!last_time_slept) {
+                std.debug.warn("Waiting until new commits are pushed to zig master branch...\n", .{});
+            }
             std.time.sleep(60 * std.time.ns_per_s);
+            last_time_slept = true;
         }
     }
 }
@@ -327,6 +364,28 @@ fn setRecordFieldT(arena: *std.mem.Allocator, comptime T: type, ptr: *T, data: [
             };
         },
         else => @compileError("no deserialization for " ++ @typeName(T)),
+    }
+}
+
+fn writeCSVRecord(out: var, record: Record) !void {
+    inline for (@typeInfo(Record).Struct.fields) |field, i| {
+        if (i != 0) {
+            try out.writeAll(comma);
+        }
+        try writeCSVRecordField(out, @field(record, field.name));
+    }
+}
+
+fn writeCSVRecordField(out: var, field: var) !void {
+    const T = @TypeOf(field);
+    if (@typeInfo(T) == .Enum) {
+        return out.writeAll(@tagName(field));
+    }
+    switch (T) {
+        u64 => return out.print("{}", .{field}),
+        []const u8 => return out.writeAll(field),
+        [20]u8 => return out.print("{x}", .{field}),
+        else => @compileError("unsupported writeCSVRecordField type: " ++ @typeName(T)),
     }
 }
 
