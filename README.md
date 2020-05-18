@@ -9,11 +9,6 @@ and exposure to how various code changes affect key measurements.
 
 ## Strategy
 
-This project uses [SourceHut](https://sourcehut.org/) builds to run
-performance testing. It is not guaranteed to have consistent hardware over
-the entire life of this project, yet we want to provide a graph with meaningful
-changes over time.
-
 The main script does `git pull` and then runs the suite of measurements against
 the latest master branch commit. When it is done, it repeats. If `git pull`
 yields no new commits, it waits 60 seconds and then tries again.
@@ -22,13 +17,58 @@ The file `queue.txt` is a line-delimited list of git commit hashes which can be
 manually added to be processed. The queue will be checked before doing
 `git pull`.
 
-It is understood that the hardware of the machine performing the benchmarks may
-change over time. Therefore, each time a new measurement is drawn, two
-benchmarks are performed: one fixed git commit, as the reference point, and
-then the new commit being tested. Both data points are stored, and any graphs
-will show the change in time in relation to the fixed reference point.
+This project is deployed on a virtual private sever and constantly running.
+It is not guaranteed to have consistent hardware over the entire life of this
+project, yet we want to provide a graph with meaningful changes over time.
+
+Therefore, each time a new measurement is drawn, two benchmarks are performed:
+one fixed git commit, as the reference point, and then the new commit being
+tested. Both data points are stored, and any graphs will show the change in
+time in relation to the fixed reference point.
 
 Measurements are directly stored and committed to this git repository, in CSV
 format (with '💩' instead of ',' as the delimiter). It is planned for new
 benchmarks to be added over time, and old benchmarks to be retired, however the
 data should remain available.
+
+## Installation
+
+### System requirements:
+
+This project was only written with POSIX systems in mind.
+
+These must be installed and available in PATH:
+
+ * git
+ * ninja
+
+### Process
+
+For each of the `baseline` commit hashes in benchmarks/manifest.json, you must
+provide a corresponding zig installation with the prefix `zig-builds/$HASH`.
+
+You also must set up `zig-builds/src` as a git repository, and set up the build
+directory using the ninja generator.
+
+```
+cd zig-builds/src
+mkdir build
+cmake .. -DCMAKE_BUILD_TYPE=Release -GNinja
+```
+
+You may need additional configuration to get LLVM/Clang/LLD to be detected.
+You can optionally test the installation by running `ninja` in the build
+directory.
+
+This zig git source tree can't be used for anything else; the benchmarking
+script modifies the state of this source tree and relies on the state not being
+otherwise modified.
+
+### Running
+
+Run the `main.zig` program from the root source directory. It is a long running
+process and will periodically poll for changes to the zig source git repo.
+Extra commits to bench can be manually added to the queue.txt file.
+
+The program must be run as a user that has permission to modify the records.csv
+file, commit it to git, and git push.

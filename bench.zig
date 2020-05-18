@@ -58,22 +58,24 @@ fn timeval_to_ns(timeval: std.os.timeval) u64 {
         @bitCast(usize, timeval.tv_usec) * ns_per_us;
 }
 
-pub fn bench(comptime func: var, args: var) Results {
-    var samples_buf: [100000]Sample = undefined;
+var samples_buf: [1000000]Sample = undefined;
+const max_nano_seconds = std.time.ns_per_s * 10;
+
+pub fn bench(options: Options, comptime func: var, args: var) Results {
     var sample_index: usize = 0;
     const timer = std.time.Timer.start() catch @panic("need timer to work");
     const first_start = timer.read();
     while ((sample_index < 3 or
-        (timer.read() - first_start) < std.time.ns_per_s * 5) and
+        (timer.read() - first_start) < max_nano_seconds) and
         sample_index < samples_buf.len)
     {
-        const start_rusage = std.os.getrusage(std.os.RUSAGE_SELF);
+        const start_rusage = std.os.getrusage(options.rusage_who);
         const start = timer.read();
         @call(.{}, func, args) catch |err| {
             return .{ .fail = err };
         };
         const end = timer.read();
-        const end_rusage = std.os.getrusage(std.os.RUSAGE_SELF);
+        const end_rusage = std.os.getrusage(options.rusage_who);
         samples_buf[sample_index] = .{
             .wall_time = end - start,
             .utime = timeval_to_ns(end_rusage.utime) - timeval_to_ns(start_rusage.utime),
@@ -86,7 +88,7 @@ pub fn bench(comptime func: var, args: var) Results {
     const utime = Measurement.compute(all_samples, "utime");
     const stime = Measurement.compute(all_samples, "stime");
 
-    const final_rusage = std.os.getrusage(std.os.RUSAGE_SELF);
+    const final_rusage = std.os.getrusage(options.rusage_who);
     return .{
         .ok = .{
             .samples_taken = all_samples.len,
@@ -98,9 +100,14 @@ pub fn bench(comptime func: var, args: var) Results {
     };
 }
 
+pub const Options = struct {
+    rusage_who: i32 = std.os.RUSAGE_SELF,
+};
+
 pub fn main() !void {
     const gpa = if (std.builtin.link_libc) std.heap.c_allocator else std.heap.page_allocator;
-    const context = try app.setup(gpa);
-    const results = bench(app.run, .{ gpa, context });
+    var options: Options = .{};
+    const context = try app.setup(gpa, &options);
+    const results = bench(options, app.run, .{ gpa, context });
     try std.json.stringify(results, std.json.StringifyOptions{}, std.io.getStdOut().outStream());
 }

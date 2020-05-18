@@ -1,42 +1,93 @@
 const std = @import("std");
 const fs = std.fs;
 const json = std.json;
-
-const Key = struct {
-    commit_hash: [20]u8,
-    benchmark_name: []const u8,
-};
+const assert = std.debug.assert;
 
 const Record = struct {
     /// Use this to join the baseline commit against the commit being benchmarked.
     timestamp: u64,
     benchmark_name: []const u8,
-    allocator: enum {
+    allocator: WhichAllocator,
+    commit_hash: [20]u8,
+    error_message: []const u8 = &[0]u8{},
+    samples_taken: u64 = 0,
+    wall_time_median: u64 = 0,
+    wall_time_mean: u64 = 0,
+    wall_time_min: u64 = 0,
+    wall_time_max: u64 = 0,
+    utime_median: u64 = 0,
+    utime_mean: u64 = 0,
+    utime_min: u64 = 0,
+    utime_max: u64 = 0,
+    stime_median: u64 = 0,
+    stime_mean: u64 = 0,
+    stime_min: u64 = 0,
+    stime_max: u64 = 0,
+    maxrss: u64 = 0,
+
+    const WhichAllocator = enum {
         /// malloc/realloc/free
         libc,
         /// the default general purpose allocator in the zig std lib.
         /// currently std.heap.page_allocator
         std_gpa,
-    },
-    commit_hash: [20]u8,
-    error_message: []const u8,
-    samples_taken: u64,
-    wall_time_median: u64,
-    wall_time_mean: u64,
-    wall_time_min: u64,
-    wall_time_max: u64,
-    utime_median: u64,
-    utime_mean: u64,
-    utime_min: u64,
-    utime_max: u64,
-    stime_median: u64,
-    stime_mean: u64,
-    stime_min: u64,
-    stime_max: u64,
-    maxrss: u64,
+    };
+
+    const Key = struct {
+        commit_hash: [20]u8,
+        benchmark_name: []const u8,
+        allocator: Record.WhichAllocator,
+    };
 };
 
+fn jsonToRecord(
+    obj: json.Value,
+    timestamp: u64,
+    benchmark_name: []const u8,
+    commit_hash: [20]u8,
+    which_allocator: Record.WhichAllocator,
+) !Record {
+    // Example success output of benchmark program:
+    // {"samples_taken":3,"wall_time":{"median":1922782021,"mean":1922782021,"min":1922782021,"max":1922782021},"utime":{"median":1872974000,"mean":1872974000,"min":1872974000,"max":1872974000},"stime":{"median":49022000,"mean":49022000,"min":49022000,"max":49022000},"maxrss":66240}
+    //
+    // Example failure output of the benchmark program:
+    // FileNotFound
+    if (obj == .String) {
+        return Record{
+            .timestamp = timestamp,
+            .benchmark_name = benchmark_name,
+            .commit_hash = commit_hash,
+            .error_message = obj.String,
+            .allocator = which_allocator,
+        };
+    }
+    return Record{
+        .timestamp = timestamp,
+        .benchmark_name = benchmark_name,
+        .commit_hash = commit_hash,
+        .allocator = which_allocator,
+        .samples_taken = @intCast(u64, obj.Object.getValue("samples_taken").?.Integer),
+        .wall_time_median = @intCast(u64, obj.Object.getValue("wall_time").?.Object.getValue("median").?.Integer),
+        .wall_time_mean = @intCast(u64, obj.Object.getValue("wall_time").?.Object.getValue("mean").?.Integer),
+        .wall_time_min = @intCast(u64, obj.Object.getValue("wall_time").?.Object.getValue("min").?.Integer),
+        .wall_time_max = @intCast(u64, obj.Object.getValue("wall_time").?.Object.getValue("max").?.Integer),
+        .utime_median = @intCast(u64, obj.Object.getValue("utime").?.Object.getValue("median").?.Integer),
+        .utime_mean = @intCast(u64, obj.Object.getValue("utime").?.Object.getValue("mean").?.Integer),
+        .utime_min = @intCast(u64, obj.Object.getValue("utime").?.Object.getValue("min").?.Integer),
+        .utime_max = @intCast(u64, obj.Object.getValue("utime").?.Object.getValue("max").?.Integer),
+        .stime_median = @intCast(u64, obj.Object.getValue("stime").?.Object.getValue("median").?.Integer),
+        .stime_mean = @intCast(u64, obj.Object.getValue("stime").?.Object.getValue("mean").?.Integer),
+        .stime_min = @intCast(u64, obj.Object.getValue("stime").?.Object.getValue("min").?.Integer),
+        .stime_max = @intCast(u64, obj.Object.getValue("stime").?.Object.getValue("max").?.Integer),
+        .maxrss = @intCast(u64, obj.Object.getValue("maxrss").?.Integer),
+    };
+}
+
 const comma = "💩";
+const zig_src_root = "zig-builds/src";
+const zig_src_build = "zig-builds/src/build";
+const zig_rel_bin = "../../zig-builds/src/build/zig";
+const CommitTable = std.AutoHashMap(Record.Key, usize);
 
 pub fn main() !void {
     const gpa = std.heap.page_allocator;
@@ -48,7 +99,7 @@ pub fn main() !void {
     std.debug.warn("Loading CSV data...\n", .{});
     var records = std.ArrayList(Record).init(gpa);
     defer records.deinit();
-    var commit_table = std.AutoHashMap(Key, usize).init(gpa);
+    var commit_table = CommitTable.init(gpa);
     defer commit_table.deinit();
 
     {
@@ -104,9 +155,10 @@ pub fn main() !void {
                 std.debug.warn("CSV line {} missing a field\n", .{line_index + 1});
                 std.process.exit(1);
             }
-            const key: Key = .{
+            const key: Record.Key = .{
                 .commit_hash = record.commit_hash,
                 .benchmark_name = record.benchmark_name,
+                .allocator = record.allocator,
             };
             if (try commit_table.put(key, record_index)) |existing| {
                 const existing_record = records.items[existing.value];
@@ -146,18 +198,7 @@ pub fn main() !void {
             var queue_index: usize = 0;
             while (queue_index < queue.items.len) {
                 const queue_commit = queue.items[queue_index];
-                var benchmarks_it = manifest_tree.root.Object.iterator();
-                const any_missing = while (benchmarks_it.next()) |kv| {
-                    const key: Key = .{
-                        .commit_hash = queue_commit,
-                        .benchmark_name = kv.key,
-                    };
-                    if (commit_table.get(key) == null) {
-                        break true;
-                    }
-                } else false;
-
-                if (!any_missing) {
+                if (isCommitDone(manifest_tree.root, &commit_table, queue_commit)) {
                     _ = queue.orderedRemove(queue_index);
                     continue;
                 }
@@ -175,26 +216,72 @@ pub fn main() !void {
 
             try baf.finish();
         }
-        var did_anything = false;
-        for (queue.items) |queue_item| {
-            did_anything = true;
-            runBenchmarks(&records, &commit_table, queue_item);
-        }
 
         // Detect changes to zig master branch
-        // TODO
+        while (true) {
+            exec(gpa, &[_][]const u8{ "git", "fetch", "origin", "--prune", "--tags" }, .{
+                .cwd = zig_src_root,
+            }) catch |err| {
+                std.debug.warn("unable to fetch latest git commits: {}\n", .{@errorName(err)});
+                std.time.sleep(60 * std.time.ns_per_s);
+                continue;
+            };
+            // git log -n 1 origin/master --pretty=format:"%H"
+            const commit_str = execCapture(gpa, &[_][]const u8{
+                "git",           "log",
+                "-n",            "1",
+                "origin/master", "--pretty=format:%H",
+            }, .{
+                .cwd = zig_src_root,
+            }) catch |err| {
+                std.debug.warn("unable to check latest master commit: {}\n", .{@errorName(err)});
+                std.time.sleep(60 * std.time.ns_per_s);
+                continue;
+            };
+            defer gpa.free(commit_str);
+            const trimmed = std.mem.trim(u8, commit_str, " \n\r\t");
+            const latest = try parseCommit(trimmed);
+            if (!isCommitDone(manifest_tree.root, &commit_table, latest)) {
+                try queue.append(latest);
+            }
+            break;
+        }
 
-        if (did_anything) {
+        const prev_records_len = records.items.len;
+        for (queue.items) |queue_item| {
+            runBenchmarks(gpa, arena, &records, &commit_table, manifest_tree.root, queue_item) catch |err| {
+                std.debug.warn("error running benchmarks: {}\n", .{@errorName(err)});
+            };
+        }
+
+        if (records.items.len != prev_records_len) {
             // Save CSV
-            // TODO
+            std.debug.warn("TODO save records.csv file\n", .{});
 
             // Commit CSV changes to git and push
-            // TODO
+            std.debug.warn("TODO commit changes to records.csv and git push\n", .{});
         } else {
             // "On the seventh day, God rested."
             std.time.sleep(60 * std.time.ns_per_s);
         }
     }
+}
+
+fn isCommitDone(manifest_tree_root: json.Value, commit_table: *CommitTable, commit: [20]u8) bool {
+    var benchmarks_it = manifest_tree_root.Object.iterator();
+    while (benchmarks_it.next()) |kv| {
+        for ([_]Record.WhichAllocator{ .libc, .std_gpa }) |which_allocator| {
+            const key: Record.Key = .{
+                .commit_hash = commit,
+                .benchmark_name = kv.key,
+                .allocator = which_allocator,
+            };
+            if (commit_table.get(key) == null) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 fn fieldIndex(comptime T: type, name: []const u8) ?usize {
@@ -259,9 +346,193 @@ fn parseCommit(text: []const u8) ![20]u8 {
 }
 
 fn runBenchmarks(
+    gpa: *std.mem.Allocator,
+    arena: *std.mem.Allocator,
     records: *std.ArrayList(Record),
-    commit_table: *std.AutoHashMap(Key, usize),
+    commit_table: *CommitTable,
+    manifest: json.Value,
     commit: [20]u8,
-) void {
-    std.debug.warn("TODO run benchmarks for {x}\n", .{commit});
+) !void {
+    // cd benchmarks/self-hosted-parser
+    // zig run --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end ../../bench.zig
+    const timestamp = std.time.milliTimestamp();
+    var benchmarks_it = manifest.Object.iterator();
+    while (benchmarks_it.next()) |entry| {
+        const benchmark_name = entry.key;
+        try records.ensureCapacity(records.items.len + 4);
+        for ([_]Record.WhichAllocator{ .libc, .std_gpa }) |which_allocator| {
+            std.debug.warn(
+                "Running '{}' for {x}, allocator={}, baseline...\n",
+                .{ benchmark_name, commit, @tagName(which_allocator) },
+            );
+
+            const baseline_commit_str = entry.value.Object.getValue("baseline").?.String;
+            const baseline_commit = try parseCommit(baseline_commit_str);
+            const dir_name = entry.value.Object.getValue("dir").?.String;
+            const main_path = entry.value.Object.getValue("mainPath").?.String;
+
+            const bench_cwd = try fs.path.join(gpa, &[_][]const u8{ "benchmarks", dir_name });
+            defer gpa.free(bench_cwd);
+
+            const baseline_zig = try fs.path.join(gpa, &[_][]const u8{
+                "../../zig-builds", baseline_commit_str,
+                "bin",              "zig",
+            });
+            defer gpa.free(baseline_zig);
+
+            var baseline_argv = std.ArrayList([]const u8).init(gpa);
+            defer baseline_argv.deinit();
+
+            try appendBenchArgs(&baseline_argv, baseline_zig, main_path, which_allocator);
+
+            const baseline_stdout = try execCapture(gpa, baseline_argv.items, .{ .cwd = bench_cwd });
+            defer gpa.free(baseline_stdout);
+
+            var bench_parser = json.Parser.init(gpa, false);
+            defer bench_parser.deinit();
+            var baseline_json = try bench_parser.parse(baseline_stdout);
+            defer baseline_json.deinit();
+            const baseline_record = try jsonToRecord(baseline_json.root, timestamp, benchmark_name, baseline_commit, which_allocator);
+
+            std.debug.warn(
+                "Running '{}' for {x}, allocator={}...\n",
+                .{ benchmark_name, commit, @tagName(which_allocator) },
+            );
+
+            var commit_str: [40]u8 = undefined;
+            _ = std.fmt.bufPrint(&commit_str, "{x}", .{commit}) catch unreachable;
+
+            // Check out the appropriate commit and rebuild Zig.
+            try exec(gpa, &[_][]const u8{ "git", "checkout", &commit_str }, .{
+                .cwd = zig_src_root,
+            });
+            try exec(gpa, &[_][]const u8{"ninja"}, .{
+                .cwd = zig_src_build,
+            });
+
+            var main_argv = std.ArrayList([]const u8).init(gpa);
+            defer main_argv.deinit();
+            try appendBenchArgs(&main_argv, zig_rel_bin, main_path, which_allocator);
+
+            const main_stdout = try execCapture(gpa, main_argv.items, .{ .cwd = bench_cwd });
+            defer gpa.free(main_stdout);
+
+            bench_parser.reset();
+            var main_json = try bench_parser.parse(main_stdout);
+            defer main_json.deinit();
+            const main_record = try jsonToRecord(main_json.root, timestamp, benchmark_name, commit, which_allocator);
+
+            const baseline_key: Record.Key = .{
+                .commit_hash = baseline_record.commit_hash,
+                .benchmark_name = baseline_record.benchmark_name,
+                .allocator = baseline_record.allocator,
+            };
+            const baseline_gop = try commit_table.getOrPut(baseline_key);
+            if (baseline_gop.found_existing) {
+                records.items[baseline_gop.kv.value] = baseline_record;
+            } else {
+                baseline_gop.kv.value = records.items.len;
+                records.appendAssumeCapacity(baseline_record);
+            }
+
+            const main_key: Record.Key = .{
+                .commit_hash = main_record.commit_hash,
+                .benchmark_name = main_record.benchmark_name,
+                .allocator = main_record.allocator,
+            };
+            const main_gop = try commit_table.getOrPut(main_key);
+            if (main_gop.found_existing) {
+                records.items[main_gop.kv.value] = main_record;
+            } else {
+                main_gop.kv.value = records.items.len;
+                records.appendAssumeCapacity(main_record);
+            }
+        }
+    }
+}
+
+fn appendBenchArgs(
+    list: *std.ArrayList([]const u8),
+    zig_exe: []const u8,
+    main_path: []const u8,
+    which_allocator: Record.WhichAllocator,
+) !void {
+    try list.ensureCapacity(16);
+    list.appendSliceAssumeCapacity(&[_][]const u8{
+        zig_exe,
+        "run",
+        "--main-pkg-path",
+        "../..",
+        "--pkg-begin",
+        "app",
+        main_path,
+        "--pkg-end",
+        "--release-fast",
+    });
+    switch (which_allocator) {
+        .libc => list.appendAssumeCapacity("-lc"),
+        .std_gpa => {},
+    }
+    list.appendAssumeCapacity("../../bench.zig");
+}
+
+fn exec(
+    gpa: *std.mem.Allocator,
+    argv: []const []const u8,
+    options: struct { cwd: ?[]const u8 = null },
+) !void {
+    const child = try std.ChildProcess.init(argv, gpa);
+    defer child.deinit();
+
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+    child.cwd = options.cwd;
+
+    const term = try child.spawnAndWait();
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                return error.ChildProcessBadExitCode;
+            }
+        },
+        else => {
+            return error.ChildProcessCrashed;
+        },
+    }
+}
+
+fn execCapture(
+    gpa: *std.mem.Allocator,
+    argv: []const []const u8,
+    options: struct { cwd: ?[]const u8 = null },
+) ![]u8 {
+    const child = try std.ChildProcess.init(argv, gpa);
+    defer child.deinit();
+
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Inherit;
+    child.cwd = options.cwd;
+
+    try child.spawn();
+
+    const stdout_in = child.stdout.?.inStream();
+
+    const stdout = try stdout_in.readAllAlloc(gpa, 9999);
+    errdefer gpa.free(stdout);
+
+    const term = try child.wait();
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                return error.ChildProcessBadExitCode;
+            }
+        },
+        else => {
+            return error.ChildProcessCrashed;
+        },
+    }
+
+    return stdout;
 }

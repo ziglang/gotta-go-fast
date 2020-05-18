@@ -1,6 +1,7 @@
 const std = @import("std");
+const bench = @import("root");
 
-pub fn setup(gpa: *std.mem.Allocator) !void {}
+pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {}
 
 pub fn run(gpa: *std.mem.Allocator, context: void) !void {
     var walker = try std.fs.walkPath(gpa, "input_dir");

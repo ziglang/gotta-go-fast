@@ -3,6 +3,7 @@
     "description": "walk std lib, parse, iterate nodes",
     "kind": "zig-bench",
     "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
-    "mainPath": "self-hosted-parser/main.zig"
+    "dir": "self-hosted-parser",
+    "mainPath": "main.zig"
   }
 }
