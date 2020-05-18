@@ -100,6 +100,7 @@ const CommitTable = std.HashMap(
     std.hash_map.getAutoHashStratFn(Record.Key, .Deep),
     Record.Key.eql,
 );
+const poll_timeout = 60 * std.time.ns_per_s;
 
 pub fn main() !void {
     const gpa = std.heap.page_allocator;
@@ -237,7 +238,7 @@ pub fn main() !void {
                 .cwd = zig_src_root,
             }) catch |err| {
                 std.debug.warn("unable to fetch latest git commits: {}\n", .{@errorName(err)});
-                std.time.sleep(60 * std.time.ns_per_s);
+                std.time.sleep(poll_timeout);
                 continue;
             };
             // git log -n 1 origin/master --pretty=format:"%H"
@@ -249,7 +250,7 @@ pub fn main() !void {
                 .cwd = zig_src_root,
             }) catch |err| {
                 std.debug.warn("unable to check latest master commit: {}\n", .{@errorName(err)});
-                std.time.sleep(60 * std.time.ns_per_s);
+                std.time.sleep(poll_timeout);
                 continue;
             };
             defer gpa.free(commit_str);
@@ -293,12 +294,29 @@ pub fn main() !void {
             }
 
             // Commit CSV changes to git and push
-            std.debug.warn("TODO commit changes to records.csv and git push\n", .{});
+            exec(gpa, &[_][]const u8{ "git", "add", records_csv_path }, .{}) catch |err| {
+                std.debug.warn("unable to stage {} for git commit: {}\n", .{ records_csv_path, @errorName(err) });
+                std.time.sleep(poll_timeout);
+                continue;
+            };
+
+            const commit_message = "add new benchmark records";
+            exec(gpa, &[_][]const u8{ "git", "commit", "-m", commit_message }, .{}) catch |err| {
+                std.debug.warn("unable to stage {} for git commit: {}\n", .{ records_csv_path, @errorName(err) });
+                std.time.sleep(poll_timeout);
+                continue;
+            };
+
+            //exec(gpa, &[_][]const u8{ "git", "push", "origin", "master" }, .{}) catch |err| {
+            //    std.debug.warn("unable to git push: {}\n", .{@errorName(err)});
+            //    std.time.sleep(poll_timeout);
+            //    continue;
+            //};
         } else {
             if (!last_time_slept) {
                 std.debug.warn("Waiting until new commits are pushed to zig master branch...\n", .{});
             }
-            std.time.sleep(60 * std.time.ns_per_s);
+            std.time.sleep(poll_timeout);
             last_time_slept = true;
         }
     }
