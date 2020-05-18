@@ -4,6 +4,15 @@
     "kind": "zig-bench",
     "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "self-hosted-parser",
-    "mainPath": "main.zig"
+    "mainPath": "main.zig",
+    "baselinePath": "main.zig"
+  },
+  "stage1-behavior-tests": {
+    "description": "use the stage1 compiler to compile and run the behavior tests",
+    "kind": "zig-bench",
+    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
+    "dir": "stage1-behavior-tests",
+    "mainPath": "main.zig",
+    "baselinePath": "baseline.zig"
   }
 }

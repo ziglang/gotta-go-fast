@@ -102,11 +102,14 @@ pub fn bench(options: Options, comptime func: var, args: var) Results {
 
 pub const Options = struct {
     rusage_who: i32 = std.os.RUSAGE_SELF,
+    zig_exe: []const u8,
 };
 
 pub fn main() !void {
     const gpa = if (std.builtin.link_libc) std.heap.c_allocator else std.heap.page_allocator;
-    var options: Options = .{};
+    var options: Options = .{
+        .zig_exe = std.mem.spanZ(std.os.argv[1]),
+    };
     const context = try app.setup(gpa, &options);
     const results = bench(options, app.run, .{ gpa, context });
     try std.json.stringify(results, std.json.StringifyOptions{}, std.io.getStdOut().outStream());

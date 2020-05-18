@@ -447,6 +447,7 @@ fn runBenchmarks(
             const baseline_commit = try parseCommit(baseline_commit_str);
             const dir_name = entry.value.Object.getValue("dir").?.String;
             const main_path = entry.value.Object.getValue("mainPath").?.String;
+            const baseline_path = entry.value.Object.getValue("baselinePath").?.String;
 
             const bench_cwd = try fs.path.join(gpa, &[_][]const u8{ "benchmarks", dir_name });
             defer gpa.free(bench_cwd);
@@ -460,7 +461,7 @@ fn runBenchmarks(
             var baseline_argv = std.ArrayList([]const u8).init(gpa);
             defer baseline_argv.deinit();
 
-            try appendBenchArgs(&baseline_argv, baseline_zig, main_path, which_allocator);
+            try appendBenchArgs(&baseline_argv, baseline_zig, baseline_path, which_allocator);
 
             const baseline_stdout = try execCapture(gpa, baseline_argv.items, .{ .cwd = bench_cwd });
             defer gpa.free(baseline_stdout);
@@ -534,7 +535,7 @@ fn appendBenchArgs(
     main_path: []const u8,
     which_allocator: Record.WhichAllocator,
 ) !void {
-    try list.ensureCapacity(16);
+    try list.ensureCapacity(20);
     list.appendSliceAssumeCapacity(&[_][]const u8{
         zig_exe,
         "run",
@@ -550,7 +551,11 @@ fn appendBenchArgs(
         .libc => list.appendAssumeCapacity("-lc"),
         .std_gpa => {},
     }
-    list.appendAssumeCapacity("../../bench.zig");
+    list.appendSliceAssumeCapacity(&[_][]const u8{
+        "../../bench.zig",
+        "--",
+        zig_exe,
+    });
 }
 
 fn exec(
