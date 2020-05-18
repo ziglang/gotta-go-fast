@@ -125,6 +125,7 @@ pub fn main() !void {
     defer queue.deinit();
 
     while (true) {
+        queue.shrink(0);
         // Detect queue.txt items
         const queue_txt_path = "queue.txt";
         if (fs.cwd().readFileAlloc(gpa, queue_txt_path, 1024 * 1024)) |queue_txt| {
@@ -174,21 +175,25 @@ pub fn main() !void {
 
             try baf.finish();
         }
+        var did_anything = false;
         for (queue.items) |queue_item| {
+            did_anything = true;
             runBenchmarks(&records, &commit_table, queue_item);
         }
 
         // Detect changes to zig master branch
         // TODO
 
-        // Run benchmarks, add records
-        // TODO
+        if (did_anything) {
+            // Save CSV
+            // TODO
 
-        // Save CSV
-        // TODO
-
-        // Commit CSV changes to git and push
-        // TODO
+            // Commit CSV changes to git and push
+            // TODO
+        } else {
+            // "On the seventh day, God rested."
+            std.time.sleep(60 * std.time.ns_per_s);
+        }
     }
 }
 
@@ -251,4 +256,12 @@ fn parseCommit(text: []const u8) ![20]u8 {
         result[i] = byte;
     }
     return result;
+}
+
+fn runBenchmarks(
+    records: *std.ArrayList(Record),
+    commit_table: *std.AutoHashMap(Key, usize),
+    commit: [20]u8,
+) void {
+    std.debug.warn("TODO run benchmarks for {x}\n", .{commit});
 }
