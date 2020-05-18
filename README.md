@@ -7,6 +7,8 @@ utilization statistics.
 The goal is to prevent performance regressions, and provide understanding
 and exposure to how various code changes affect key measurements.
 
+![](zigfast.png)
+
 ## Strategy
 
 The main script does `git pull` and then runs the suite of measurements against
