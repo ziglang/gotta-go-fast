@@ -108,6 +108,17 @@ pub fn main() !void {
     defer arena_state.deinit();
     const arena = &arena_state.allocator;
 
+    const args = try std.process.argsAlloc(arena);
+    var auto_commit_and_push = false;
+    for (args[1..]) |arg| {
+        if (std.mem.eql(u8, arg, "--auto-commit-and-push")) {
+            auto_commit_and_push = true;
+        } else {
+            std.debug.warn("unrecognized command line parameter: '{}'\n", .{arg});
+            std.process.exit(1);
+        }
+    }
+
     // Load CSV into memory
     std.debug.warn("Loading CSV data...\n", .{});
     var records = std.ArrayList(Record).init(gpa);
@@ -293,25 +304,31 @@ pub fn main() !void {
                 try baf.finish();
             }
 
-            // Commit CSV changes to git and push
-            exec(gpa, &[_][]const u8{ "git", "add", records_csv_path }, .{}) catch |err| {
-                std.debug.warn("unable to stage {} for git commit: {}\n", .{ records_csv_path, @errorName(err) });
-                std.time.sleep(poll_timeout);
-                continue;
-            };
+            if (auto_commit_and_push) {
+                std.debug.warn("Committing changes to git and pushing...\n", .{});
 
-            const commit_message = "add new benchmark records";
-            exec(gpa, &[_][]const u8{ "git", "commit", "-m", commit_message }, .{}) catch |err| {
-                std.debug.warn("unable to stage {} for git commit: {}\n", .{ records_csv_path, @errorName(err) });
-                std.time.sleep(poll_timeout);
-                continue;
-            };
+                // Commit CSV changes to git and push
+                exec(gpa, &[_][]const u8{ "git", "add", records_csv_path }, .{}) catch |err| {
+                    std.debug.warn("unable to stage {} for git commit: {}\n", .{ records_csv_path, @errorName(err) });
+                    std.time.sleep(poll_timeout);
+                    continue;
+                };
 
-            //exec(gpa, &[_][]const u8{ "git", "push", "origin", "master" }, .{}) catch |err| {
-            //    std.debug.warn("unable to git push: {}\n", .{@errorName(err)});
-            //    std.time.sleep(poll_timeout);
-            //    continue;
-            //};
+                const commit_message = "add new benchmark records";
+                exec(gpa, &[_][]const u8{ "git", "commit", "-m", commit_message }, .{}) catch |err| {
+                    std.debug.warn("unable to stage {} for git commit: {}\n", .{ records_csv_path, @errorName(err) });
+                    std.time.sleep(poll_timeout);
+                    continue;
+                };
+
+                exec(gpa, &[_][]const u8{ "git", "push", "origin", "master" }, .{}) catch |err| {
+                    std.debug.warn("unable to git push: {}\n", .{@errorName(err)});
+                    std.time.sleep(poll_timeout);
+                    continue;
+                };
+            } else {
+                std.debug.warn("Skipping git commit and push. Use --auto-commit-and-push to change this.\n", .{});
+            }
         } else {
             if (!last_time_slept) {
                 std.debug.warn("Waiting until new commits are pushed to zig master branch...\n", .{});
