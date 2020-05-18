@@ -90,7 +90,7 @@ fn jsonToRecord(
 }
 
 const records_csv_path = "records.csv";
-const comma = "💩";
+const comma = ",";
 const zig_src_root = "zig-builds/src";
 const zig_src_build = "zig-builds/src/build";
 const zig_rel_bin = "../../zig-builds/src/build/zig";
