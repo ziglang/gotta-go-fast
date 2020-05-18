@@ -69,6 +69,9 @@ pub fn bench(options: Options, comptime func: var, args: var) Results {
         (timer.read() - first_start) < max_nano_seconds) and
         sample_index < samples_buf.len)
     {
+        if (options.clear_zig_cache) {
+            std.fs.cwd().deleteTree("zig-cache") catch @panic("unable to delete zig-cache");
+        }
         const start_rusage = std.os.getrusage(options.rusage_who);
         const start = timer.read();
         @call(.{}, func, args) catch |err| {
@@ -103,6 +106,7 @@ pub fn bench(options: Options, comptime func: var, args: var) Results {
 pub const Options = struct {
     rusage_who: i32 = std.os.RUSAGE_SELF,
     zig_exe: []const u8,
+    clear_zig_cache: bool = false,
 };
 
 pub fn main() !void {

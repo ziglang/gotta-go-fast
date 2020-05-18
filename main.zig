@@ -453,21 +453,22 @@ fn runBenchmarks(
     var benchmarks_it = manifest.Object.iterator();
     while (benchmarks_it.next()) |entry| {
         const benchmark_name = entry.key;
-        try records.ensureCapacity(records.items.len + 4);
+        const baseline_commit_str = entry.value.Object.getValue("baseline").?.String;
+        const baseline_commit = try parseCommit(baseline_commit_str);
+        const dir_name = entry.value.Object.getValue("dir").?.String;
+        const main_path = entry.value.Object.getValue("mainPath").?.String;
+        const baseline_path = entry.value.Object.getValue("baselinePath").?.String;
+
+        try records.ensureCapacity(records.items.len + 2);
         for ([_]Record.WhichAllocator{ .libc, .std_gpa }) |which_allocator| {
             std.debug.warn(
                 "Running '{}' for {x}, allocator={}, baseline...\n",
                 .{ benchmark_name, commit, @tagName(which_allocator) },
             );
-
-            const baseline_commit_str = entry.value.Object.getValue("baseline").?.String;
-            const baseline_commit = try parseCommit(baseline_commit_str);
-            const dir_name = entry.value.Object.getValue("dir").?.String;
-            const main_path = entry.value.Object.getValue("mainPath").?.String;
-            const baseline_path = entry.value.Object.getValue("baselinePath").?.String;
-
             const bench_cwd = try fs.path.join(gpa, &[_][]const u8{ "benchmarks", dir_name });
             defer gpa.free(bench_cwd);
+
+            //std.debug.warn("main_path={}, baseline_path={}, cwd={}\n", .{ main_path, baseline_path, bench_cwd });
 
             const baseline_zig = try fs.path.join(gpa, &[_][]const u8{
                 "../../zig-builds", baseline_commit_str,
@@ -613,6 +614,12 @@ fn execCapture(
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Inherit;
     child.cwd = options.cwd;
+
+    //std.debug.warn("cwd={}\n", .{child.cwd});
+    //for (argv) |arg| {
+    //    std.debug.warn("{} ", .{arg});
+    //}
+    //std.debug.warn("\n", .{});
 
     try child.spawn();
 
