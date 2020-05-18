@@ -73,3 +73,12 @@ The program will periodically modify the `records.csv` file. If you want it to
 automatically commit this file to git and push it, use the command line
 parameter `--auto-commit-and-push`. In this case, the program must be run as a
 user that has permission to do perform `git commit` and `git push` commands.
+
+## What About Cool Graphs And Stuff?
+
+Out of scope. This project's entire purpose is to keep records.csv updated with
+new data.
+
+It will be the job of a separate project to periodically pull this data and
+do something useful with it, such as make pretty graphs and put them on
+ziglang.org.
