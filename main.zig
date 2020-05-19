@@ -286,11 +286,10 @@ pub fn main() !void {
                 std.time.sleep(poll_timeout);
                 continue;
             };
-            // git log -n 1 origin/master --pretty=format:"%H"
             const commit_str = execCapture(gpa, &[_][]const u8{
-                "git",           "log",
-                "-n",            "1",
-                "origin/master", "--pretty=format:%H",
+                "git",                "log",
+                "-n1",                "origin/master",
+                "--pretty=format:%H",
             }, .{
                 .cwd = zig_src_root,
             }) catch |err| {
@@ -491,9 +490,26 @@ fn runBenchmarks(
 
     try records.ensureCapacity(records.items.len + manifest.Object.size * 2);
 
+    var commit_str: [40]u8 = undefined;
+    _ = std.fmt.bufPrint(&commit_str, "{x}", .{commit}) catch unreachable;
+
+    const timestamp_str = execCapture(gpa, &[_][]const u8{
+        "git",                 "log",
+        "-n1",                 &commit_str,
+        "--pretty=format:%at",
+    }, .{
+        .cwd = zig_src_root,
+    }) catch |err| {
+        std.debug.warn("unable to check timestamp of commit {}: {}\n", .{ &commit_str, @errorName(err) });
+        return error.UnableToCheckCommitTimestamp;
+    };
+    const timestamp = std.fmt.parseInt(u64, std.mem.trim(u8, timestamp_str, " \n\r\t"), 10) catch |err| {
+        std.debug.warn("bad timestamp format: '{}': {}\n", .{ timestamp_str, @errorName(err) });
+        return error.BadTimestampFormat;
+    };
+
     // cd benchmarks/self-hosted-parser
     // zig run --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end ../../bench.zig
-    const timestamp = std.time.milliTimestamp();
     var benchmarks_it = manifest.Object.iterator();
     while (benchmarks_it.next()) |entry| {
         const skip_libc_alloc = if (entry.value.Object.getValue("skipLibCAllocator")) |v| v.Bool else false;
@@ -527,10 +543,6 @@ fn runBenchmarks(
             "bin",              "zig",
         });
         defer gpa.free(baseline_zig);
-
-        // Prepare new zig
-        var commit_str: [40]u8 = undefined;
-        _ = std.fmt.bufPrint(&commit_str, "{x}", .{commit}) catch unreachable;
 
         // Check out the appropriate commit and rebuild Zig.
         try exec(gpa, &[_][]const u8{ "git", "checkout", &commit_str }, .{
