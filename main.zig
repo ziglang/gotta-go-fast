@@ -4,7 +4,6 @@ const json = std.json;
 const assert = std.debug.assert;
 
 const Record = struct {
-    /// Use this to join the baseline commit against the commit being benchmarked.
     timestamp: u64,
     benchmark_name: []const u8,
     allocator: WhichAllocator,
@@ -25,6 +24,22 @@ const Record = struct {
     stime_max: u64 = 0,
     maxrss: u64 = 0,
 
+    baseline_error_message: []const u8 = &[0]u8{},
+    baseline_samples_taken: u64 = 0,
+    baseline_wall_time_median: u64 = 0,
+    baseline_wall_time_mean: u64 = 0,
+    baseline_wall_time_min: u64 = 0,
+    baseline_wall_time_max: u64 = 0,
+    baseline_utime_median: u64 = 0,
+    baseline_utime_mean: u64 = 0,
+    baseline_utime_min: u64 = 0,
+    baseline_utime_max: u64 = 0,
+    baseline_stime_median: u64 = 0,
+    baseline_stime_mean: u64 = 0,
+    baseline_stime_min: u64 = 0,
+    baseline_stime_max: u64 = 0,
+    baseline_maxrss: u64 = 0,
+
     const WhichAllocator = enum {
         /// malloc/realloc/free
         libc,
@@ -44,25 +59,14 @@ const Record = struct {
                 std.mem.eql(u8, self.benchmark_name, other.benchmark_name);
         }
     };
-
-    const BaselineKey = struct {
-        timestamp: u64,
-        commit_hash: [20]u8,
-        benchmark_name: []const u8,
-        allocator: Record.WhichAllocator,
-
-        fn eql(self: BaselineKey, other: BaselineKey) bool {
-            return self.timestamp == other.timestamp and
-                self.allocator == other.allocator and
-                std.mem.eql(u8, &self.commit_hash, &other.commit_hash) and
-                std.mem.eql(u8, self.benchmark_name, other.benchmark_name);
-        }
-    };
 };
 
 fn jsonToRecord(
     arena: *std.mem.Allocator,
-    obj: json.Value,
+    /// main object
+    mo: json.Value,
+    /// baseline object
+    bo: json.Value,
     timestamp: u64,
     benchmark_name: []const u8,
     commit_hash: [20]u8,
@@ -73,35 +77,50 @@ fn jsonToRecord(
     //
     // Example failure output of the benchmark program:
     // FileNotFound
-    if (obj == .String) {
-        return Record{
-            .timestamp = timestamp,
-            .benchmark_name = try arena.dupe(u8, benchmark_name),
-            .commit_hash = commit_hash,
-            .error_message = try arena.dupe(u8, obj.String),
-            .allocator = which_allocator,
-        };
-    }
-    return Record{
+    var record: Record = .{
         .timestamp = timestamp,
         .benchmark_name = try arena.dupe(u8, benchmark_name),
         .commit_hash = commit_hash,
         .allocator = which_allocator,
-        .samples_taken = @intCast(u64, obj.Object.getValue("samples_taken").?.Integer),
-        .wall_time_median = @intCast(u64, obj.Object.getValue("wall_time").?.Object.getValue("median").?.Integer),
-        .wall_time_mean = @intCast(u64, obj.Object.getValue("wall_time").?.Object.getValue("mean").?.Integer),
-        .wall_time_min = @intCast(u64, obj.Object.getValue("wall_time").?.Object.getValue("min").?.Integer),
-        .wall_time_max = @intCast(u64, obj.Object.getValue("wall_time").?.Object.getValue("max").?.Integer),
-        .utime_median = @intCast(u64, obj.Object.getValue("utime").?.Object.getValue("median").?.Integer),
-        .utime_mean = @intCast(u64, obj.Object.getValue("utime").?.Object.getValue("mean").?.Integer),
-        .utime_min = @intCast(u64, obj.Object.getValue("utime").?.Object.getValue("min").?.Integer),
-        .utime_max = @intCast(u64, obj.Object.getValue("utime").?.Object.getValue("max").?.Integer),
-        .stime_median = @intCast(u64, obj.Object.getValue("stime").?.Object.getValue("median").?.Integer),
-        .stime_mean = @intCast(u64, obj.Object.getValue("stime").?.Object.getValue("mean").?.Integer),
-        .stime_min = @intCast(u64, obj.Object.getValue("stime").?.Object.getValue("min").?.Integer),
-        .stime_max = @intCast(u64, obj.Object.getValue("stime").?.Object.getValue("max").?.Integer),
-        .maxrss = @intCast(u64, obj.Object.getValue("maxrss").?.Integer),
     };
+    if (mo == .String) {
+        record.error_message = try arena.dupe(u8, mo.String);
+    } else {
+        record.samples_taken = @intCast(u64, mo.Object.getValue("samples_taken").?.Integer);
+        record.wall_time_median = @intCast(u64, mo.Object.getValue("wall_time").?.Object.getValue("median").?.Integer);
+        record.wall_time_mean = @intCast(u64, mo.Object.getValue("wall_time").?.Object.getValue("mean").?.Integer);
+        record.wall_time_min = @intCast(u64, mo.Object.getValue("wall_time").?.Object.getValue("min").?.Integer);
+        record.wall_time_max = @intCast(u64, mo.Object.getValue("wall_time").?.Object.getValue("max").?.Integer);
+        record.utime_median = @intCast(u64, mo.Object.getValue("utime").?.Object.getValue("median").?.Integer);
+        record.utime_mean = @intCast(u64, mo.Object.getValue("utime").?.Object.getValue("mean").?.Integer);
+        record.utime_min = @intCast(u64, mo.Object.getValue("utime").?.Object.getValue("min").?.Integer);
+        record.utime_max = @intCast(u64, mo.Object.getValue("utime").?.Object.getValue("max").?.Integer);
+        record.stime_median = @intCast(u64, mo.Object.getValue("stime").?.Object.getValue("median").?.Integer);
+        record.stime_mean = @intCast(u64, mo.Object.getValue("stime").?.Object.getValue("mean").?.Integer);
+        record.stime_min = @intCast(u64, mo.Object.getValue("stime").?.Object.getValue("min").?.Integer);
+        record.stime_max = @intCast(u64, mo.Object.getValue("stime").?.Object.getValue("max").?.Integer);
+        record.maxrss = @intCast(u64, mo.Object.getValue("maxrss").?.Integer);
+    }
+    if (bo == .String) {
+        record.error_message = try arena.dupe(u8, bo.String);
+    } else {
+        record.baseline_samples_taken = @intCast(u64, bo.Object.getValue("samples_taken").?.Integer);
+        record.baseline_wall_time_median = @intCast(u64, bo.Object.getValue("wall_time").?.Object.getValue("median").?.Integer);
+        record.baseline_wall_time_mean = @intCast(u64, bo.Object.getValue("wall_time").?.Object.getValue("mean").?.Integer);
+        record.baseline_wall_time_min = @intCast(u64, bo.Object.getValue("wall_time").?.Object.getValue("min").?.Integer);
+        record.baseline_wall_time_max = @intCast(u64, bo.Object.getValue("wall_time").?.Object.getValue("max").?.Integer);
+        record.baseline_utime_median = @intCast(u64, bo.Object.getValue("utime").?.Object.getValue("median").?.Integer);
+        record.baseline_utime_mean = @intCast(u64, bo.Object.getValue("utime").?.Object.getValue("mean").?.Integer);
+        record.baseline_utime_min = @intCast(u64, bo.Object.getValue("utime").?.Object.getValue("min").?.Integer);
+        record.baseline_utime_max = @intCast(u64, bo.Object.getValue("utime").?.Object.getValue("max").?.Integer);
+        record.baseline_stime_median = @intCast(u64, bo.Object.getValue("stime").?.Object.getValue("median").?.Integer);
+        record.baseline_stime_mean = @intCast(u64, bo.Object.getValue("stime").?.Object.getValue("mean").?.Integer);
+        record.baseline_stime_min = @intCast(u64, bo.Object.getValue("stime").?.Object.getValue("min").?.Integer);
+        record.baseline_stime_max = @intCast(u64, bo.Object.getValue("stime").?.Object.getValue("max").?.Integer);
+        record.baseline_maxrss = @intCast(u64, bo.Object.getValue("maxrss").?.Integer);
+    }
+
+    return record;
 }
 
 const records_csv_path = "records.csv";
@@ -114,12 +133,6 @@ const CommitTable = std.HashMap(
     usize,
     std.hash_map.getAutoHashStratFn(Record.Key, .Deep),
     Record.Key.eql,
-);
-const BaselineTable = std.HashMap(
-    Record.BaselineKey,
-    usize,
-    std.hash_map.getAutoHashStratFn(Record.BaselineKey, .Deep),
-    Record.BaselineKey.eql,
 );
 const poll_timeout = 60 * std.time.ns_per_s;
 
@@ -146,8 +159,6 @@ pub fn main() !void {
     defer records.deinit();
     var commit_table = CommitTable.init(gpa);
     defer commit_table.deinit();
-    var baseline_table = BaselineTable.init(gpa);
-    defer baseline_table.deinit();
 
     {
         const csv_text = try fs.cwd().readFileAlloc(gpa, records_csv_path, 2 * 1024 * 1024 * 1024);
@@ -202,26 +213,15 @@ pub fn main() !void {
                 std.debug.warn("CSV line {} missing a field\n", .{line_index + 1});
                 std.process.exit(1);
             }
-            {
-                const key: Record.BaselineKey = .{
-                    .timestamp = record.timestamp,
-                    .commit_hash = record.commit_hash,
-                    .benchmark_name = record.benchmark_name,
-                    .allocator = record.allocator,
-                };
-                _ = try baseline_table.put(key, record_index);
-            }
-            {
-                const key: Record.Key = .{
-                    .commit_hash = record.commit_hash,
-                    .benchmark_name = record.benchmark_name,
-                    .allocator = record.allocator,
-                };
-                if (try commit_table.put(key, record_index)) |existing| {
-                    const existing_record = records.items[existing.value];
-                    if (existing_record.timestamp > record.timestamp) {
-                        _ = commit_table.putAssumeCapacity(key, existing.value);
-                    }
+            const key: Record.Key = .{
+                .commit_hash = record.commit_hash,
+                .benchmark_name = record.benchmark_name,
+                .allocator = record.allocator,
+            };
+            if (try commit_table.put(key, record_index)) |existing| {
+                const existing_record = records.items[existing.value];
+                if (existing_record.timestamp > record.timestamp) {
+                    _ = commit_table.putAssumeCapacity(key, existing.value);
                 }
             }
         }
@@ -309,7 +309,7 @@ pub fn main() !void {
 
         const prev_records_len = records.items.len;
         for (queue.items) |queue_item| {
-            runBenchmarks(gpa, arena, &records, &commit_table, &baseline_table, manifest_tree.root, queue_item) catch |err| {
+            runBenchmarks(gpa, arena, &records, &commit_table, manifest_tree.root, queue_item) catch |err| {
                 std.debug.warn("error running benchmarks: {}\n", .{@errorName(err)});
             };
         }
@@ -376,7 +376,12 @@ pub fn main() !void {
 fn isCommitDone(manifest_tree_root: json.Value, commit_table: *CommitTable, commit: [20]u8) bool {
     var benchmarks_it = manifest_tree_root.Object.iterator();
     while (benchmarks_it.next()) |kv| {
-        for ([_]Record.WhichAllocator{ .libc, .std_gpa }) |which_allocator| {
+        const skip_libc_alloc = if (kv.value.Object.getValue("skipLibCAllocator")) |v| v.Bool else false;
+        const which_allocators = if (skip_libc_alloc)
+            &[1]Record.WhichAllocator{.std_gpa}
+        else
+            &[_]Record.WhichAllocator{ .libc, .std_gpa };
+        for (which_allocators) |which_allocator| {
             const key: Record.Key = .{
                 .commit_hash = commit,
                 .benchmark_name = kv.key,
@@ -478,18 +483,25 @@ fn runBenchmarks(
     arena: *std.mem.Allocator,
     records: *std.ArrayList(Record),
     commit_table: *CommitTable,
-    baseline_table: *BaselineTable,
     manifest: json.Value,
     commit: [20]u8,
 ) !void {
     const abs_zig_src_bin = try fs.realpathAlloc(gpa, zig_src_bin);
     defer gpa.free(abs_zig_src_bin);
 
+    try records.ensureCapacity(records.items.len + manifest.Object.size * 2);
+
     // cd benchmarks/self-hosted-parser
     // zig run --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end ../../bench.zig
     const timestamp = std.time.milliTimestamp();
     var benchmarks_it = manifest.Object.iterator();
     while (benchmarks_it.next()) |entry| {
+        const skip_libc_alloc = if (entry.value.Object.getValue("skipLibCAllocator")) |v| v.Bool else false;
+        const which_allocators = if (skip_libc_alloc)
+            &[1]Record.WhichAllocator{.std_gpa}
+        else
+            &[_]Record.WhichAllocator{ .libc, .std_gpa };
+
         const benchmark_name = entry.key;
         const baseline_commit_str = entry.value.Object.getValue("baseline").?.String;
         const baseline_commit = try parseCommit(baseline_commit_str);
@@ -528,8 +540,7 @@ fn runBenchmarks(
             .cwd = zig_src_build,
         });
 
-        try records.ensureCapacity(records.items.len + 2);
-        for ([_]Record.WhichAllocator{ .libc, .std_gpa }) |which_allocator| {
+        for (which_allocators) |which_allocator| {
             std.debug.warn(
                 "Running '{}' for {x}, allocator={}, baseline...\n",
                 .{ benchmark_name, commit, @tagName(which_allocator) },
@@ -550,7 +561,6 @@ fn runBenchmarks(
                 return error.InvalidBenchJSON;
             };
             defer baseline_json.deinit();
-            const baseline_record = try jsonToRecord(arena, baseline_json.root, timestamp, benchmark_name, baseline_commit, which_allocator);
 
             std.debug.warn(
                 "Running '{}' for {x}, allocator={}...\n",
@@ -570,33 +580,28 @@ fn runBenchmarks(
                 return error.InvalidBenchJSON;
             };
             defer main_json.deinit();
-            const main_record = try jsonToRecord(arena, main_json.root, timestamp, benchmark_name, commit, which_allocator);
 
-            const baseline_key: Record.BaselineKey = .{
-                .timestamp = timestamp,
-                .commit_hash = baseline_record.commit_hash,
-                .benchmark_name = baseline_record.benchmark_name,
-                .allocator = baseline_record.allocator,
-            };
-            const baseline_gop = try baseline_table.getOrPut(baseline_key);
-            if (baseline_gop.found_existing) {
-                records.items[baseline_gop.kv.value] = baseline_record;
-            } else {
-                baseline_gop.kv.value = records.items.len;
-                records.appendAssumeCapacity(baseline_record);
-            }
+            const record = try jsonToRecord(
+                arena,
+                main_json.root,
+                baseline_json.root,
+                timestamp,
+                benchmark_name,
+                commit,
+                which_allocator,
+            );
 
-            const main_key: Record.Key = .{
-                .commit_hash = main_record.commit_hash,
-                .benchmark_name = main_record.benchmark_name,
-                .allocator = main_record.allocator,
+            const key: Record.Key = .{
+                .commit_hash = record.commit_hash,
+                .benchmark_name = record.benchmark_name,
+                .allocator = record.allocator,
             };
-            const main_gop = try commit_table.getOrPut(main_key);
+            const main_gop = try commit_table.getOrPut(key);
             if (main_gop.found_existing) {
-                records.items[main_gop.kv.value] = main_record;
+                records.items[main_gop.kv.value] = record;
             } else {
                 main_gop.kv.value = records.items.len;
-                records.appendAssumeCapacity(main_record);
+                records.appendAssumeCapacity(record);
             }
         }
     }

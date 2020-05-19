@@ -13,6 +13,16 @@
     "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "stage1-behavior-tests",
     "mainPath": "main.zig",
-    "baselinePath": "baseline.zig"
+    "baselinePath": "baseline.zig",
+    "skipLibCAllocator": true
+  },
+  "stage1-std-tests": {
+    "description": "use the stage1 compiler to compile and run the std lib tests",
+    "kind": "zig-bench",
+    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
+    "dir": "stage1-std-tests",
+    "mainPath": "main.zig",
+    "baselinePath": "baseline.zig",
+    "skipLibCAllocator": true
   }
 }
