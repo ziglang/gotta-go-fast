@@ -10,9 +10,11 @@ pub fn run(gpa: *std.mem.Allocator, zig_exe: []const u8) !void {
     return exec(gpa, &[_][]const u8{
         zig_exe,
         "test",
-        "test/stage1/behavior.zig",
+        "../test/stage1/behavior.zig",
+        "--cache",
+        "off",
     }, .{
-        .cwd = "../../zig-builds/src",
+        .cwd = "../../zig-builds/src/build",
     });
 }
 

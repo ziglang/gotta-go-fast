@@ -70,7 +70,15 @@ pub fn bench(options: Options, comptime func: var, args: var) Results {
         sample_index < samples_buf.len)
     {
         if (options.clear_zig_cache) {
-            std.fs.cwd().deleteTree("zig-cache") catch @panic("unable to delete zig-cache");
+            std.fs.cwd().deleteTree("zig-cache") catch |err| {
+                std.debug.panic("unable to delete zig-cache: {}", .{@errorName(err)});
+            };
+            std.fs.cwd().deleteTree("../../zig-builds/src/zig-cache") catch |err| {
+                std.debug.panic("unable to delete zig-cache: {}", .{@errorName(err)});
+            };
+            std.fs.cwd().deleteTree("../../zig-builds/src/build/zig-cache") catch |err| {
+                std.debug.panic("unable to delete zig-cache: {}", .{@errorName(err)});
+            };
         }
         const start_rusage = std.os.getrusage(options.rusage_who);
         const start = timer.read();

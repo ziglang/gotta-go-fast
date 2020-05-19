@@ -3,7 +3,6 @@ const bench = @import("root");
 
 pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) ![]const u8 {
     options.rusage_who = std.os.RUSAGE_CHILDREN;
-    options.clear_zig_cache = true;
     return options.zig_exe;
 }
 
@@ -12,6 +11,8 @@ pub fn run(gpa: *std.mem.Allocator, zig_exe: []const u8) !void {
         zig_exe,
         "test",
         "baseline/behavior.zig",
+        "--cache",
+        "off",
     }, .{});
 }
 

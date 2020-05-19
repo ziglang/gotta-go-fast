@@ -44,9 +44,24 @@ const Record = struct {
                 std.mem.eql(u8, self.benchmark_name, other.benchmark_name);
         }
     };
+
+    const BaselineKey = struct {
+        timestamp: u64,
+        commit_hash: [20]u8,
+        benchmark_name: []const u8,
+        allocator: Record.WhichAllocator,
+
+        fn eql(self: BaselineKey, other: BaselineKey) bool {
+            return self.timestamp == other.timestamp and
+                self.allocator == other.allocator and
+                std.mem.eql(u8, &self.commit_hash, &other.commit_hash) and
+                std.mem.eql(u8, self.benchmark_name, other.benchmark_name);
+        }
+    };
 };
 
 fn jsonToRecord(
+    arena: *std.mem.Allocator,
     obj: json.Value,
     timestamp: u64,
     benchmark_name: []const u8,
@@ -61,15 +76,15 @@ fn jsonToRecord(
     if (obj == .String) {
         return Record{
             .timestamp = timestamp,
-            .benchmark_name = benchmark_name,
+            .benchmark_name = try arena.dupe(u8, benchmark_name),
             .commit_hash = commit_hash,
-            .error_message = obj.String,
+            .error_message = try arena.dupe(u8, obj.String),
             .allocator = which_allocator,
         };
     }
     return Record{
         .timestamp = timestamp,
-        .benchmark_name = benchmark_name,
+        .benchmark_name = try arena.dupe(u8, benchmark_name),
         .commit_hash = commit_hash,
         .allocator = which_allocator,
         .samples_taken = @intCast(u64, obj.Object.getValue("samples_taken").?.Integer),
@@ -93,12 +108,18 @@ const records_csv_path = "records.csv";
 const comma = ",";
 const zig_src_root = "zig-builds/src";
 const zig_src_build = "zig-builds/src/build";
-const zig_rel_bin = "../../zig-builds/src/build/zig";
+const zig_src_bin = "zig-builds/src/build/zig";
 const CommitTable = std.HashMap(
     Record.Key,
     usize,
     std.hash_map.getAutoHashStratFn(Record.Key, .Deep),
     Record.Key.eql,
+);
+const BaselineTable = std.HashMap(
+    Record.BaselineKey,
+    usize,
+    std.hash_map.getAutoHashStratFn(Record.BaselineKey, .Deep),
+    Record.BaselineKey.eql,
 );
 const poll_timeout = 60 * std.time.ns_per_s;
 
@@ -125,6 +146,8 @@ pub fn main() !void {
     defer records.deinit();
     var commit_table = CommitTable.init(gpa);
     defer commit_table.deinit();
+    var baseline_table = BaselineTable.init(gpa);
+    defer baseline_table.deinit();
 
     {
         const csv_text = try fs.cwd().readFileAlloc(gpa, records_csv_path, 2 * 1024 * 1024 * 1024);
@@ -179,15 +202,26 @@ pub fn main() !void {
                 std.debug.warn("CSV line {} missing a field\n", .{line_index + 1});
                 std.process.exit(1);
             }
-            const key: Record.Key = .{
-                .commit_hash = record.commit_hash,
-                .benchmark_name = record.benchmark_name,
-                .allocator = record.allocator,
-            };
-            if (try commit_table.put(key, record_index)) |existing| {
-                const existing_record = records.items[existing.value];
-                if (existing_record.timestamp > record.timestamp) {
-                    _ = commit_table.putAssumeCapacity(key, existing.value);
+            {
+                const key: Record.BaselineKey = .{
+                    .timestamp = record.timestamp,
+                    .commit_hash = record.commit_hash,
+                    .benchmark_name = record.benchmark_name,
+                    .allocator = record.allocator,
+                };
+                _ = try baseline_table.put(key, record_index);
+            }
+            {
+                const key: Record.Key = .{
+                    .commit_hash = record.commit_hash,
+                    .benchmark_name = record.benchmark_name,
+                    .allocator = record.allocator,
+                };
+                if (try commit_table.put(key, record_index)) |existing| {
+                    const existing_record = records.items[existing.value];
+                    if (existing_record.timestamp > record.timestamp) {
+                        _ = commit_table.putAssumeCapacity(key, existing.value);
+                    }
                 }
             }
         }
@@ -275,7 +309,7 @@ pub fn main() !void {
 
         const prev_records_len = records.items.len;
         for (queue.items) |queue_item| {
-            runBenchmarks(gpa, arena, &records, &commit_table, manifest_tree.root, queue_item) catch |err| {
+            runBenchmarks(gpa, arena, &records, &commit_table, &baseline_table, manifest_tree.root, queue_item) catch |err| {
                 std.debug.warn("error running benchmarks: {}\n", .{@errorName(err)});
             };
         }
@@ -444,9 +478,13 @@ fn runBenchmarks(
     arena: *std.mem.Allocator,
     records: *std.ArrayList(Record),
     commit_table: *CommitTable,
+    baseline_table: *BaselineTable,
     manifest: json.Value,
     commit: [20]u8,
 ) !void {
+    const abs_zig_src_bin = try fs.realpathAlloc(gpa, zig_src_bin);
+    defer gpa.free(abs_zig_src_bin);
+
     // cd benchmarks/self-hosted-parser
     // zig run --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end ../../bench.zig
     const timestamp = std.time.milliTimestamp();
@@ -456,8 +494,39 @@ fn runBenchmarks(
         const baseline_commit_str = entry.value.Object.getValue("baseline").?.String;
         const baseline_commit = try parseCommit(baseline_commit_str);
         const dir_name = entry.value.Object.getValue("dir").?.String;
-        const main_path = entry.value.Object.getValue("mainPath").?.String;
-        const baseline_path = entry.value.Object.getValue("baselinePath").?.String;
+        const main_basename = entry.value.Object.getValue("mainPath").?.String;
+        const baseline_basename = entry.value.Object.getValue("baselinePath").?.String;
+
+        const bench_cwd = try fs.path.join(gpa, &[_][]const u8{ "benchmarks", dir_name });
+        defer gpa.free(bench_cwd);
+
+        const full_main_path = try fs.path.join(gpa, &[_][]const u8{ bench_cwd, main_basename });
+        defer gpa.free(full_main_path);
+        const abs_main_path = try fs.realpathAlloc(gpa, full_main_path);
+        defer gpa.free(abs_main_path);
+
+        const full_baseline_path = try fs.path.join(gpa, &[_][]const u8{ bench_cwd, baseline_basename });
+        defer gpa.free(full_baseline_path);
+        const abs_baseline_path = try fs.realpathAlloc(gpa, full_baseline_path);
+        defer gpa.free(abs_baseline_path);
+
+        const baseline_zig = try fs.path.join(gpa, &[_][]const u8{
+            "../../zig-builds", baseline_commit_str,
+            "bin",              "zig",
+        });
+        defer gpa.free(baseline_zig);
+
+        // Prepare new zig
+        var commit_str: [40]u8 = undefined;
+        _ = std.fmt.bufPrint(&commit_str, "{x}", .{commit}) catch unreachable;
+
+        // Check out the appropriate commit and rebuild Zig.
+        try exec(gpa, &[_][]const u8{ "git", "checkout", &commit_str }, .{
+            .cwd = zig_src_root,
+        });
+        try exec(gpa, &[_][]const u8{"ninja"}, .{
+            .cwd = zig_src_build,
+        });
 
         try records.ensureCapacity(records.items.len + 2);
         for ([_]Record.WhichAllocator{ .libc, .std_gpa }) |which_allocator| {
@@ -465,65 +534,51 @@ fn runBenchmarks(
                 "Running '{}' for {x}, allocator={}, baseline...\n",
                 .{ benchmark_name, commit, @tagName(which_allocator) },
             );
-            const bench_cwd = try fs.path.join(gpa, &[_][]const u8{ "benchmarks", dir_name });
-            defer gpa.free(bench_cwd);
-
-            //std.debug.warn("main_path={}, baseline_path={}, cwd={}\n", .{ main_path, baseline_path, bench_cwd });
-
-            const baseline_zig = try fs.path.join(gpa, &[_][]const u8{
-                "../../zig-builds", baseline_commit_str,
-                "bin",              "zig",
-            });
-            defer gpa.free(baseline_zig);
 
             var baseline_argv = std.ArrayList([]const u8).init(gpa);
             defer baseline_argv.deinit();
 
-            try appendBenchArgs(&baseline_argv, baseline_zig, baseline_path, which_allocator);
+            try appendBenchArgs(&baseline_argv, baseline_zig, abs_baseline_path, which_allocator);
 
             const baseline_stdout = try execCapture(gpa, baseline_argv.items, .{ .cwd = bench_cwd });
             defer gpa.free(baseline_stdout);
 
             var bench_parser = json.Parser.init(gpa, false);
             defer bench_parser.deinit();
-            var baseline_json = try bench_parser.parse(baseline_stdout);
+            var baseline_json = bench_parser.parse(baseline_stdout) catch |err| {
+                std.debug.warn("bad json: {}\n{}\n", .{ @errorName(err), baseline_stdout });
+                return error.InvalidBenchJSON;
+            };
             defer baseline_json.deinit();
-            const baseline_record = try jsonToRecord(baseline_json.root, timestamp, benchmark_name, baseline_commit, which_allocator);
+            const baseline_record = try jsonToRecord(arena, baseline_json.root, timestamp, benchmark_name, baseline_commit, which_allocator);
 
             std.debug.warn(
                 "Running '{}' for {x}, allocator={}...\n",
                 .{ benchmark_name, commit, @tagName(which_allocator) },
             );
 
-            var commit_str: [40]u8 = undefined;
-            _ = std.fmt.bufPrint(&commit_str, "{x}", .{commit}) catch unreachable;
-
-            // Check out the appropriate commit and rebuild Zig.
-            try exec(gpa, &[_][]const u8{ "git", "checkout", &commit_str }, .{
-                .cwd = zig_src_root,
-            });
-            try exec(gpa, &[_][]const u8{"ninja"}, .{
-                .cwd = zig_src_build,
-            });
-
             var main_argv = std.ArrayList([]const u8).init(gpa);
             defer main_argv.deinit();
-            try appendBenchArgs(&main_argv, zig_rel_bin, main_path, which_allocator);
+            try appendBenchArgs(&main_argv, abs_zig_src_bin, abs_main_path, which_allocator);
 
             const main_stdout = try execCapture(gpa, main_argv.items, .{ .cwd = bench_cwd });
             defer gpa.free(main_stdout);
 
             bench_parser.reset();
-            var main_json = try bench_parser.parse(main_stdout);
+            var main_json = bench_parser.parse(main_stdout) catch |err| {
+                std.debug.warn("bad json: {}\n{}\n", .{ @errorName(err), main_stdout });
+                return error.InvalidBenchJSON;
+            };
             defer main_json.deinit();
-            const main_record = try jsonToRecord(main_json.root, timestamp, benchmark_name, commit, which_allocator);
+            const main_record = try jsonToRecord(arena, main_json.root, timestamp, benchmark_name, commit, which_allocator);
 
-            const baseline_key: Record.Key = .{
+            const baseline_key: Record.BaselineKey = .{
+                .timestamp = timestamp,
                 .commit_hash = baseline_record.commit_hash,
                 .benchmark_name = baseline_record.benchmark_name,
                 .allocator = baseline_record.allocator,
             };
-            const baseline_gop = try commit_table.getOrPut(baseline_key);
+            const baseline_gop = try baseline_table.getOrPut(baseline_key);
             if (baseline_gop.found_existing) {
                 records.items[baseline_gop.kv.value] = baseline_record;
             } else {
@@ -557,6 +612,8 @@ fn appendBenchArgs(
     list.appendSliceAssumeCapacity(&[_][]const u8{
         zig_exe,
         "run",
+        "--cache",
+        "off",
         "--main-pkg-path",
         "../..",
         "--pkg-begin",
