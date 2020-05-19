@@ -220,9 +220,8 @@ pub fn main() !void {
             };
             if (try commit_table.put(key, record_index)) |existing| {
                 const existing_record = records.items[existing.value];
-                if (existing_record.timestamp > record.timestamp) {
-                    _ = commit_table.putAssumeCapacity(key, existing.value);
-                }
+                _ = commit_table.putAssumeCapacity(key, existing.value);
+                records.shrink(records.items.len - 1);
             }
         }
     }
