@@ -24,5 +24,14 @@
     "mainPath": "main.zig",
     "baselinePath": "baseline.zig",
     "skipLibCAllocator": true
+  },
+  "translate-c-windows-h": {
+    "description": "translate-c windows.h",
+    "kind": "zig-bench",
+    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
+    "dir": "translate-c",
+    "mainPath": "main.zig",
+    "baselinePath": "main.zig",
+    "skipLibCAllocator": true
   }
 }

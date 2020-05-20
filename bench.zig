@@ -126,3 +126,34 @@ pub fn main() !void {
     const results = bench(options, app.run, .{ gpa, context });
     try std.json.stringify(results, std.json.StringifyOptions{}, std.io.getStdOut().outStream());
 }
+
+pub fn exec(
+    gpa: *std.mem.Allocator,
+    argv: []const []const u8,
+    options: struct {
+        cwd: ?[]const u8 = null,
+        stdin_behavior: std.ChildProcess.StdIo = .Inherit,
+        stdout_behavior: std.ChildProcess.StdIo = .Inherit,
+        stderr_behavior: std.ChildProcess.StdIo = .Inherit,
+    },
+) !void {
+    const child = try std.ChildProcess.init(argv, gpa);
+    defer child.deinit();
+
+    child.stdin_behavior = options.stdin_behavior;
+    child.stdout_behavior = options.stdout_behavior;
+    child.stderr_behavior = options.stderr_behavior;
+    child.cwd = options.cwd;
+
+    const term = try child.spawnAndWait();
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                return error.ChildProcessBadExitCode;
+            }
+        },
+        else => {
+            return error.ChildProcessCrashed;
+        },
+    }
+}
