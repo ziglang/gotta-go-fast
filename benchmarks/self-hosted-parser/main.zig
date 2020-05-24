@@ -22,7 +22,7 @@ pub fn run(gpa: *std.mem.Allocator, context: void) !void {
         else => continue,
     };
 
-    std.testing.expect(total_count == 1205875);
+    std.testing.expect(total_count >= 1000000);
 }
 
 fn iterate(node: *std.zig.ast.Node) usize {
