@@ -1706,7 +1706,7 @@ pub const LibExeObjStep = struct {
             .Enum => |enum_info| {
                 out.print("const {} = enum {{\n", .{@typeName(T)}) catch unreachable;
                 inline for (enum_info.fields) |field| {
-                    out.print("    {},\n", .{ field.name }) catch unreachable;
+                    out.print("    {},\n", .{field.name}) catch unreachable;
                 }
                 out.print("}};\n", .{}) catch unreachable;
             },

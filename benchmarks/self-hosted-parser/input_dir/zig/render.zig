@@ -2151,7 +2151,7 @@ fn renderParamDecl(
         try renderToken(tree, stream, tree.nextToken(name_token), indent, start_col, Space.Space); // :
     }
     switch (param_decl.param_type) {
-        .var_args => |token|  try renderToken(tree, stream, token, indent, start_col, space),
+        .var_args => |token| try renderToken(tree, stream, token, indent, start_col, space),
         .var_type, .type_expr => |node| try renderExpression(allocator, stream, tree, indent, start_col, node, space),
     }
 }
