@@ -7,6 +7,15 @@
     "mainPath": "main.zig",
     "baselinePath": "main.zig"
   },
+  "zig-fmt": {
+    "description": "run zig fmt on the std lib",
+    "kind": "zig-bench",
+    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
+    "dir": "self-hosted-parser",
+    "mainPath": "zigfmt-main.zig",
+    "baselinePath": "zigfmt-main.zig",
+    "skipLibCAllocator": true
+  },
   "stage1-behavior-tests": {
     "description": "use the stage1 compiler to compile and run the behavior tests",
     "kind": "zig-bench",
