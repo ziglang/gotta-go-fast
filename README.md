@@ -84,3 +84,5 @@ new data.
 It will be the job of a separate project to periodically pull this data and
 do something useful with it, such as make pretty graphs and put them on
 ziglang.org.
+
+In the meantime, some automatically updated graphs can be found [here](https://docs.google.com/spreadsheets/d/1Up7WXdC3cvuHyMq5nKNmTj6pCxH2MxSohAKGuM6zGpg/edit?usp=sharing).
