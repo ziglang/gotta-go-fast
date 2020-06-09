@@ -9,12 +9,12 @@ pub const Measurement = struct {
 
     fn compute(all_samples: []Sample, comptime field: []const u8) Measurement {
         const S = struct {
-            fn order(context: void, a: Sample, b: Sample) bool {
+            fn order(a: Sample, b: Sample) bool {
                 return @field(a, field) < @field(b, field);
             }
         };
         // Remove the 2 outliers
-        std.sort.sort(Sample, all_samples, {}, S.order);
+        std.sort.sort(Sample, all_samples, S.order);
         const samples = all_samples[1 .. all_samples.len - 1];
         // Compute stats
         var total: u64 = 0;

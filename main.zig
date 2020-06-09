@@ -560,7 +560,7 @@ fn runBenchmarks(
             var baseline_argv = std.ArrayList([]const u8).init(gpa);
             defer baseline_argv.deinit();
 
-            try appendBenchArgs(&baseline_argv, baseline_zig, abs_baseline_path, which_allocator);
+            try appendBenchArgs(&baseline_argv, baseline_zig, abs_baseline_path, which_allocator, "../../bench-baseline.zig");
 
             const baseline_stdout = try execCapture(gpa, baseline_argv.items, .{ .cwd = bench_cwd });
             defer gpa.free(baseline_stdout);
@@ -580,7 +580,7 @@ fn runBenchmarks(
 
             var main_argv = std.ArrayList([]const u8).init(gpa);
             defer main_argv.deinit();
-            try appendBenchArgs(&main_argv, abs_zig_src_bin, abs_main_path, which_allocator);
+            try appendBenchArgs(&main_argv, abs_zig_src_bin, abs_main_path, which_allocator, "../../bench.zig");
 
             const main_stdout = try execCapture(gpa, main_argv.items, .{ .cwd = bench_cwd });
             defer gpa.free(main_stdout);
@@ -623,6 +623,7 @@ fn appendBenchArgs(
     zig_exe: []const u8,
     main_path: []const u8,
     which_allocator: Record.WhichAllocator,
+    bench_zig: []const u8,
 ) !void {
     try list.ensureCapacity(20);
     list.appendSliceAssumeCapacity(&[_][]const u8{
@@ -643,7 +644,7 @@ fn appendBenchArgs(
         .std_gpa => {},
     }
     list.appendSliceAssumeCapacity(&[_][]const u8{
-        "../../bench.zig",
+        bench_zig,
         "--",
         zig_exe,
     });
