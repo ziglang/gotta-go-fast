@@ -86,3 +86,13 @@ do something useful with it, such as make pretty graphs and put them on
 ziglang.org.
 
 In the meantime, some automatically updated graphs can be found [here](https://docs.google.com/spreadsheets/d/1Up7WXdC3cvuHyMq5nKNmTj6pCxH2MxSohAKGuM6zGpg/edit?usp=sharing).
+
+## Adding a New Benchmark
+
+Add it to `benchmarks/manifest.json`.
+
+You can run a benchmark alone to test it like this:
+
+```
+../../zig-builds/src/build/zig run --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end --release-fast -lc ../../bench.zig -- ../../zig-builds/src/build/zig
+```
