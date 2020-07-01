@@ -681,6 +681,7 @@ fn execCapture(
     argv: []const []const u8,
     options: struct { cwd: ?[]const u8 = null },
 ) ![]u8 {
+    //std.debug.warn("exec argv[0]={} cwd={}\n", .{argv[0], options.cwd});
     const child = try std.ChildProcess.init(argv, gpa);
     defer child.deinit();
 
