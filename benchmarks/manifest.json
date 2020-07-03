@@ -50,5 +50,13 @@
     "dir": "arena-allocator",
     "mainPath": "main.zig",
     "baselinePath": "main.zig"
+  },
+  "std-hash-map": {
+    "description": "std.AutoHashMap - Project Euler 14",
+    "kind": "zig-bench",
+    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
+    "dir": "std-hash-map",
+    "mainPath": "main.zig",
+    "baselinePath": "main.zig"
   }
 }
