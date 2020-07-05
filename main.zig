@@ -86,38 +86,38 @@ fn jsonToRecord(
     if (mo == .String) {
         record.error_message = try arena.dupe(u8, mo.String);
     } else {
-        record.samples_taken = @intCast(u64, mo.Object.getValue("samples_taken").?.Integer);
-        record.wall_time_median = @intCast(u64, mo.Object.getValue("wall_time").?.Object.getValue("median").?.Integer);
-        record.wall_time_mean = @intCast(u64, mo.Object.getValue("wall_time").?.Object.getValue("mean").?.Integer);
-        record.wall_time_min = @intCast(u64, mo.Object.getValue("wall_time").?.Object.getValue("min").?.Integer);
-        record.wall_time_max = @intCast(u64, mo.Object.getValue("wall_time").?.Object.getValue("max").?.Integer);
-        record.utime_median = @intCast(u64, mo.Object.getValue("utime").?.Object.getValue("median").?.Integer);
-        record.utime_mean = @intCast(u64, mo.Object.getValue("utime").?.Object.getValue("mean").?.Integer);
-        record.utime_min = @intCast(u64, mo.Object.getValue("utime").?.Object.getValue("min").?.Integer);
-        record.utime_max = @intCast(u64, mo.Object.getValue("utime").?.Object.getValue("max").?.Integer);
-        record.stime_median = @intCast(u64, mo.Object.getValue("stime").?.Object.getValue("median").?.Integer);
-        record.stime_mean = @intCast(u64, mo.Object.getValue("stime").?.Object.getValue("mean").?.Integer);
-        record.stime_min = @intCast(u64, mo.Object.getValue("stime").?.Object.getValue("min").?.Integer);
-        record.stime_max = @intCast(u64, mo.Object.getValue("stime").?.Object.getValue("max").?.Integer);
-        record.maxrss = @intCast(u64, mo.Object.getValue("maxrss").?.Integer);
+        record.samples_taken = @intCast(u64, mo.Object.get("samples_taken").?.Integer);
+        record.wall_time_median = @intCast(u64, mo.Object.get("wall_time").?.Object.get("median").?.Integer);
+        record.wall_time_mean = @intCast(u64, mo.Object.get("wall_time").?.Object.get("mean").?.Integer);
+        record.wall_time_min = @intCast(u64, mo.Object.get("wall_time").?.Object.get("min").?.Integer);
+        record.wall_time_max = @intCast(u64, mo.Object.get("wall_time").?.Object.get("max").?.Integer);
+        record.utime_median = @intCast(u64, mo.Object.get("utime").?.Object.get("median").?.Integer);
+        record.utime_mean = @intCast(u64, mo.Object.get("utime").?.Object.get("mean").?.Integer);
+        record.utime_min = @intCast(u64, mo.Object.get("utime").?.Object.get("min").?.Integer);
+        record.utime_max = @intCast(u64, mo.Object.get("utime").?.Object.get("max").?.Integer);
+        record.stime_median = @intCast(u64, mo.Object.get("stime").?.Object.get("median").?.Integer);
+        record.stime_mean = @intCast(u64, mo.Object.get("stime").?.Object.get("mean").?.Integer);
+        record.stime_min = @intCast(u64, mo.Object.get("stime").?.Object.get("min").?.Integer);
+        record.stime_max = @intCast(u64, mo.Object.get("stime").?.Object.get("max").?.Integer);
+        record.maxrss = @intCast(u64, mo.Object.get("maxrss").?.Integer);
     }
     if (bo == .String) {
         record.error_message = try arena.dupe(u8, bo.String);
     } else {
-        record.baseline_samples_taken = @intCast(u64, bo.Object.getValue("samples_taken").?.Integer);
-        record.baseline_wall_time_median = @intCast(u64, bo.Object.getValue("wall_time").?.Object.getValue("median").?.Integer);
-        record.baseline_wall_time_mean = @intCast(u64, bo.Object.getValue("wall_time").?.Object.getValue("mean").?.Integer);
-        record.baseline_wall_time_min = @intCast(u64, bo.Object.getValue("wall_time").?.Object.getValue("min").?.Integer);
-        record.baseline_wall_time_max = @intCast(u64, bo.Object.getValue("wall_time").?.Object.getValue("max").?.Integer);
-        record.baseline_utime_median = @intCast(u64, bo.Object.getValue("utime").?.Object.getValue("median").?.Integer);
-        record.baseline_utime_mean = @intCast(u64, bo.Object.getValue("utime").?.Object.getValue("mean").?.Integer);
-        record.baseline_utime_min = @intCast(u64, bo.Object.getValue("utime").?.Object.getValue("min").?.Integer);
-        record.baseline_utime_max = @intCast(u64, bo.Object.getValue("utime").?.Object.getValue("max").?.Integer);
-        record.baseline_stime_median = @intCast(u64, bo.Object.getValue("stime").?.Object.getValue("median").?.Integer);
-        record.baseline_stime_mean = @intCast(u64, bo.Object.getValue("stime").?.Object.getValue("mean").?.Integer);
-        record.baseline_stime_min = @intCast(u64, bo.Object.getValue("stime").?.Object.getValue("min").?.Integer);
-        record.baseline_stime_max = @intCast(u64, bo.Object.getValue("stime").?.Object.getValue("max").?.Integer);
-        record.baseline_maxrss = @intCast(u64, bo.Object.getValue("maxrss").?.Integer);
+        record.baseline_samples_taken = @intCast(u64, bo.Object.get("samples_taken").?.Integer);
+        record.baseline_wall_time_median = @intCast(u64, bo.Object.get("wall_time").?.Object.get("median").?.Integer);
+        record.baseline_wall_time_mean = @intCast(u64, bo.Object.get("wall_time").?.Object.get("mean").?.Integer);
+        record.baseline_wall_time_min = @intCast(u64, bo.Object.get("wall_time").?.Object.get("min").?.Integer);
+        record.baseline_wall_time_max = @intCast(u64, bo.Object.get("wall_time").?.Object.get("max").?.Integer);
+        record.baseline_utime_median = @intCast(u64, bo.Object.get("utime").?.Object.get("median").?.Integer);
+        record.baseline_utime_mean = @intCast(u64, bo.Object.get("utime").?.Object.get("mean").?.Integer);
+        record.baseline_utime_min = @intCast(u64, bo.Object.get("utime").?.Object.get("min").?.Integer);
+        record.baseline_utime_max = @intCast(u64, bo.Object.get("utime").?.Object.get("max").?.Integer);
+        record.baseline_stime_median = @intCast(u64, bo.Object.get("stime").?.Object.get("median").?.Integer);
+        record.baseline_stime_mean = @intCast(u64, bo.Object.get("stime").?.Object.get("mean").?.Integer);
+        record.baseline_stime_min = @intCast(u64, bo.Object.get("stime").?.Object.get("min").?.Integer);
+        record.baseline_stime_max = @intCast(u64, bo.Object.get("stime").?.Object.get("max").?.Integer);
+        record.baseline_maxrss = @intCast(u64, bo.Object.get("maxrss").?.Integer);
     }
 
     return record;
@@ -133,6 +133,7 @@ const CommitTable = std.HashMap(
     usize,
     std.hash_map.getAutoHashStratFn(Record.Key, .Deep),
     Record.Key.eql,
+    true,
 );
 const poll_timeout = 60 * std.time.ns_per_s;
 
@@ -218,7 +219,7 @@ pub fn main() !void {
                 .benchmark_name = record.benchmark_name,
                 .allocator = record.allocator,
             };
-            if (try commit_table.put(key, record_index)) |existing| {
+            if (try commit_table.fetchPut(key, record_index)) |existing| {
                 const existing_record = records.items[existing.value];
                 _ = commit_table.putAssumeCapacity(key, existing.value);
                 records.shrink(records.items.len - 1);
@@ -372,9 +373,8 @@ pub fn main() !void {
 }
 
 fn isCommitDone(manifest_tree_root: json.Value, commit_table: *CommitTable, commit: [20]u8) bool {
-    var benchmarks_it = manifest_tree_root.Object.iterator();
-    while (benchmarks_it.next()) |kv| {
-        const skip_libc_alloc = if (kv.value.Object.getValue("skipLibCAllocator")) |v| v.Bool else false;
+    for (manifest_tree_root.Object.items()) |entry| {
+        const skip_libc_alloc = if (entry.value.Object.get("skipLibCAllocator")) |v| v.Bool else false;
         const which_allocators = if (skip_libc_alloc)
             &[1]Record.WhichAllocator{.std_gpa}
         else
@@ -382,7 +382,7 @@ fn isCommitDone(manifest_tree_root: json.Value, commit_table: *CommitTable, comm
         for (which_allocators) |which_allocator| {
             const key: Record.Key = .{
                 .commit_hash = commit,
-                .benchmark_name = kv.key,
+                .benchmark_name = entry.key,
                 .allocator = which_allocator,
             };
             if (commit_table.get(key) == null) {
@@ -487,7 +487,7 @@ fn runBenchmarks(
     const abs_zig_src_bin = try fs.realpathAlloc(gpa, zig_src_bin);
     defer gpa.free(abs_zig_src_bin);
 
-    try records.ensureCapacity(records.items.len + manifest.Object.size * 2);
+    try records.ensureCapacity(records.items.len + manifest.Object.items().len * 2);
 
     var commit_str: [40]u8 = undefined;
     _ = std.fmt.bufPrint(&commit_str, "{x}", .{commit}) catch unreachable;
@@ -511,18 +511,18 @@ fn runBenchmarks(
     // zig run --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end ../../bench.zig
     var benchmarks_it = manifest.Object.iterator();
     while (benchmarks_it.next()) |entry| {
-        const skip_libc_alloc = if (entry.value.Object.getValue("skipLibCAllocator")) |v| v.Bool else false;
+        const skip_libc_alloc = if (entry.value.Object.get("skipLibCAllocator")) |v| v.Bool else false;
         const which_allocators = if (skip_libc_alloc)
             &[1]Record.WhichAllocator{.std_gpa}
         else
             &[_]Record.WhichAllocator{ .libc, .std_gpa };
 
         const benchmark_name = entry.key;
-        const baseline_commit_str = entry.value.Object.getValue("baseline").?.String;
+        const baseline_commit_str = entry.value.Object.get("baseline").?.String;
         const baseline_commit = try parseCommit(baseline_commit_str);
-        const dir_name = entry.value.Object.getValue("dir").?.String;
-        const main_basename = entry.value.Object.getValue("mainPath").?.String;
-        const baseline_basename = entry.value.Object.getValue("baselinePath").?.String;
+        const dir_name = entry.value.Object.get("dir").?.String;
+        const main_basename = entry.value.Object.get("mainPath").?.String;
+        const baseline_basename = entry.value.Object.get("baselinePath").?.String;
 
         const bench_cwd = try fs.path.join(gpa, &[_][]const u8{ "benchmarks", dir_name });
         defer gpa.free(bench_cwd);
@@ -609,9 +609,9 @@ fn runBenchmarks(
             };
             const main_gop = try commit_table.getOrPut(key);
             if (main_gop.found_existing) {
-                records.items[main_gop.kv.value] = record;
+                records.items[main_gop.entry.value] = record;
             } else {
-                main_gop.kv.value = records.items.len;
+                main_gop.entry.value = records.items.len;
                 records.appendAssumeCapacity(record);
             }
         }
