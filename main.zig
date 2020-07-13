@@ -439,7 +439,7 @@ fn setRecordFieldT(arena: *std.mem.Allocator, comptime T: type, ptr: *T, data: [
     }
 }
 
-fn writeCSVRecord(out: var, record: Record) !void {
+fn writeCSVRecord(out: anytype, record: Record) !void {
     inline for (@typeInfo(Record).Struct.fields) |field, i| {
         if (i != 0) {
             try out.writeAll(comma);
@@ -448,7 +448,7 @@ fn writeCSVRecord(out: var, record: Record) !void {
     }
 }
 
-fn writeCSVRecordField(out: var, field: var) !void {
+fn writeCSVRecordField(out: anytype, field: anytype) !void {
     const T = @TypeOf(field);
     if (@typeInfo(T) == .Enum) {
         return out.writeAll(@tagName(field));
