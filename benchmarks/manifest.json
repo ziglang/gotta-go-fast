@@ -4,7 +4,7 @@
     "kind": "zig-bench",
     "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "self-hosted-parser",
-    "mainPath": "main.zig",
+    "mainPath": "main-master.zig",
     "baselinePath": "main.zig"
   },
   "zig-fmt": {
@@ -12,7 +12,7 @@
     "kind": "zig-bench",
     "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "self-hosted-parser",
-    "mainPath": "zigfmt-main.zig",
+    "mainPath": "zigfmt-main-master.zig",
     "baselinePath": "zigfmt-main.zig",
     "skipLibCAllocator": true
   },

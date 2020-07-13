@@ -61,7 +61,7 @@ fn timeval_to_ns(timeval: std.os.timeval) u64 {
 var samples_buf: [1000000]Sample = undefined;
 const max_nano_seconds = std.time.ns_per_s * 10;
 
-pub fn bench(options: Options, comptime func: var, args: var) Results {
+pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
     var sample_index: usize = 0;
     const timer = std.time.Timer.start() catch @panic("need timer to work");
     const first_start = timer.read();
