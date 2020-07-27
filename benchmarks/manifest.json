@@ -55,8 +55,32 @@
     "description": "std.AutoHashMap - Project Euler 14",
     "kind": "zig-bench",
     "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
-    "dir": "std-hash-map",
+    "dir": "std-hash-map/project-euler-14",
     "mainPath": "main.zig",
     "baselinePath": "baseline.zig"
+  },
+  "insert-10M-int": {
+    "description": "std.AutoHashMap - Insert 10M int",
+    "kind": "zig-bench",
+    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
+    "dir": "std-hash-map/insert-10M-int",
+    "mainPath": "main.zig",
+    "baselinePath": "main.zig"
+  },
+  "random-distinct": {
+    "description": "std.AutoHashMap - Random distinct",
+    "kind": "zig-bench",
+    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
+    "dir": "std-hash-map/random-distinct",
+    "mainPath": "main.zig",
+    "baselinePath": "main.zig"
+  },
+  "random-find": {
+    "description": "std.AutoHashMap - Random find",
+    "kind": "zig-bench",
+    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
+    "dir": "std-hash-map/random-find",
+    "mainPath": "main.zig",
+    "baselinePath": "main.zig"
   }
 }
