@@ -94,5 +94,5 @@ Add it to `benchmarks/manifest.json`.
 You can run a benchmark alone to test it like this:
 
 ```
-../../zig-builds/src/build/zig run --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end --release-fast -lc ../../bench.zig -- ../../zig-builds/src/build/zig
+../../zig-builds/src/build/zig run --cache off --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end --release-fast -lc ../../bench.zig -- ../../zig-builds/src/build/zig
 ```
