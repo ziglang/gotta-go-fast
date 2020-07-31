@@ -73,7 +73,7 @@
     "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "std-hash-map",
     "mainPath": "insert-10M-int.zig",
-    "baselinePath": "insert-10M-int.zig"
+    "baselinePath": "insert-10M-int-baseline.zig"
   },
   "random-distinct": {
     "description": "std.AutoHashMap - Random distinct",
