@@ -13,6 +13,8 @@ pub fn run(gpa: *std.mem.Allocator, zig_exe: []const u8) !void {
         "../test/stage1/behavior.zig",
         "--cache",
         "off",
+        "-I",
+        "../test/",
     }, .{
         .cwd = "../../zig-builds/src/build",
     });
