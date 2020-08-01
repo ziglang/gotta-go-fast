@@ -89,6 +89,6 @@
     "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "std-hash-map",
     "mainPath": "random-find.zig",
-    "baselinePath": "random-find.zig"
+    "baselinePath": "random-find-baseline.zig"
   }
 }
