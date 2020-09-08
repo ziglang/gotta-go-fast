@@ -22,12 +22,15 @@ pub fn run(gpa: *std.mem.Allocator, context: void) !void {
     if (maxx != 837799) @panic("bad maxx");
     if (maxl != 524) @panic("bad maxl");
 
-    var total: u64 = 0;
-    for (cache.items()) |entry| {
-        total +%= entry.key;
-        total +%= entry.value;
+    {
+        var total: u64 = 0;
+        var it = cache.iterator();
+        while (it.next()) |item| {
+            total +%= item.key;
+            total +%= item.value;
+        }
+        if (total != 12387203240855) @panic("bad total");
     }
-    if (total != 12387203240855) @panic("bad total");
 }
 
 fn step(x: u64) u64 {
