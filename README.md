@@ -19,7 +19,7 @@ The file `queue.txt` is a line-delimited list of git commit hashes which can be
 manually added to be processed. The queue will be checked before doing
 `git pull`.
 
-This project is deployed on a virtual private sever and constantly running.
+This project is deployed on a virtual private server and constantly running.
 It is not guaranteed to have consistent hardware over the entire life of this
 project, yet we want to provide a graph with meaningful changes over time.
 
