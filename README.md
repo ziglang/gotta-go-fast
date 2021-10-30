@@ -42,11 +42,14 @@ noise.
 
 Metadata:
 
- * Git Commit sha1
- * Git Commit Message
- * Git Commit Date
- * Git Commit Author
+ * Benchmark name
+ * Timestamp of when the benchmark was executed
  * How many times the benchmark was executed in 5 seconds
+ * Zig Git Commit SHA1
+ * Zig Git Commit Message
+ * Zig Git Commit Date
+ * Zig Git Commit Author
+ * gotta-go-fast Git Commit Sha1
 
 ### CPU Details
 
@@ -75,4 +78,16 @@ clflush size	: 64
 cache_alignment	: 64
 address sizes	: 48 bits physical, 48 bits virtual
 power management: ts ttp tm hwpstate cpb eff_freq_ro [13] [14]
+```
+
+## Instructions for the CI Script
+
+These measurements should only be taken for a Zig compiler that has passed the
+full test suite, and the `zig` command should be a release build matching the
+git commit of `$PATH_TO_ZIG_GIT_REPO`.
+
+After cloning this repository:
+
+```
+zig build run -- $PATH_TO_ZIG_GIT_REPO
 ```

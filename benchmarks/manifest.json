@@ -2,93 +2,71 @@
   "self-hosted-parser": {
     "description": "walk std lib, parse, iterate nodes",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "self-hosted-parser",
     "mainPath": "main-master.zig",
-    "baselinePath": "main.zig"
   },
   "zig-fmt": {
     "description": "run zig fmt on the std lib",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "self-hosted-parser",
     "mainPath": "zigfmt-main-master.zig",
-    "baselinePath": "zigfmt-main.zig",
     "skipLibCAllocator": true
   },
   "stage1-behavior-tests": {
     "description": "use the stage1 compiler to compile and run the behavior tests",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "stage1-behavior-tests",
     "mainPath": "main.zig",
-    "baselinePath": "baseline.zig",
     "skipLibCAllocator": true
   },
   "stage1-std-tests": {
     "description": "use the stage1 compiler to compile and run the std lib tests",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "stage1-std-tests",
     "mainPath": "main.zig",
-    "baselinePath": "baseline.zig",
     "skipLibCAllocator": true
   },
   "translate-c-windows-h": {
     "description": "translate-c windows.h",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "translate-c",
     "mainPath": "main.zig",
-    "baselinePath": "main.zig",
     "skipLibCAllocator": true
   },
   "arena-allocator": {
     "description": "general-purpose usage of std.heap.ArenaAllocator",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "arena-allocator",
     "mainPath": "main.zig",
-    "baselinePath": "main.zig"
   },
   "std-rand": {
     "description": "random number generation",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "rand",
     "mainPath": "main.zig",
-    "baselinePath": "main.zig"
   },
   "std-hash-map": {
     "description": "std.AutoHashMap - Project Euler 14",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "std-hash-map",
     "mainPath": "project-euler-14-main.zig",
-    "baselinePath": "project-euler-14-baseline.zig"
   },
   "insert-10M-int": {
     "description": "std.AutoHashMap - Insert 10M int",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "std-hash-map",
     "mainPath": "insert-10M-int.zig",
-    "baselinePath": "insert-10M-int-baseline.zig"
   },
   "random-distinct": {
     "description": "std.AutoHashMap - Random distinct",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "std-hash-map",
     "mainPath": "random-distinct.zig",
-    "baselinePath": "random-distinct.zig"
   },
   "random-find": {
     "description": "std.AutoHashMap - Random find",
     "kind": "zig-bench",
-    "baseline": "feade9ef0010b1b47d7216e786ed964d09612c2b",
     "dir": "std-hash-map",
     "mainPath": "random-find.zig",
-    "baselinePath": "random-find-baseline.zig"
   }
 }
