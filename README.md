@@ -18,10 +18,10 @@ executes a series of benchmarks using Linux's performance measurement syscalls
 with a AMD Ryzen 9 5950X 16-Core Processor, an NVMe hard drive, Linux kernel
 5.14.14-arch1-1. See more CPU details below in the [[CPU Details]] section.
 
-The measurements are stored in a JSON file which is atomically swapped with
+The measurements are stored in a CSV file which is atomically swapped with
 updated data when a new benchmark completes. After a new benchmark row is added
-to the dataset, it is pushed to `https://ziglang.org/perf/data.json`. The
-static HTML + JavaScript at https://ziglang.org/perf/ loads `data.json` and
+to the dataset, it is pushed to `https://ziglang.org/perf/data.csv`. The
+static HTML + JavaScript at https://ziglang.org/perf/ loads `data.csv` and
 presents it in interactive graph form.
 
 Each benchmark gets a fixed amount of time allocated: 5 seconds per benchmark.
