@@ -65,7 +65,7 @@ pub fn Group(comptime ReturnType: type) type {
         /// allocated by the group and freed by `wait`.
         /// `func` must be async and have return type `ReturnType`.
         /// Thread-safe.
-        pub fn call(self: *Self, comptime func: var, args: var) error{OutOfMemory}!void {
+        pub fn call(self: *Self, comptime func: anytype, args: anytype) error{OutOfMemory}!void {
             var frame = try self.allocator.create(@TypeOf(@call(.{ .modifier = .async_kw }, func, args)));
             errdefer self.allocator.destroy(frame);
             const node = try self.allocator.create(AllocStack.Node);
@@ -125,7 +125,7 @@ test "std.event.Group" {
     // TODO this file has bit-rotted. repair it
     if (true) return error.SkipZigTest;
 
-    const handle = async testGroup(std.heap.page_allocator);
+    _ = async testGroup(std.heap.page_allocator);
 }
 fn testGroup(allocator: *Allocator) callconv(.Async) void {
     var count: usize = 0;
@@ -135,17 +135,17 @@ fn testGroup(allocator: *Allocator) callconv(.Async) void {
     var increase_by_ten_frame = async increaseByTen(&count);
     group.add(&increase_by_ten_frame) catch @panic("memory");
     group.wait();
-    testing.expect(count == 11);
+    try testing.expect(count == 11);
 
     var another = Group(anyerror!void).init(allocator);
     var something_else_frame = async somethingElse();
     another.add(&something_else_frame) catch @panic("memory");
     var something_that_fails_frame = async doSomethingThatFails();
     another.add(&something_that_fails_frame) catch @panic("memory");
-    testing.expectError(error.ItBroke, another.wait());
+    try testing.expectError(error.ItBroke, another.wait());
 }
 fn sleepALittle(count: *usize) callconv(.Async) void {
-    std.time.sleep(1 * std.time.millisecond);
+    std.time.sleep(1 * std.time.ns_per_ms);
     _ = @atomicRmw(usize, count, .Add, 1, .SeqCst);
 }
 fn increaseByTen(count: *usize) callconv(.Async) void {

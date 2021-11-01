@@ -14,7 +14,7 @@ pub fn __floatunditf(a: u64) callconv(.C) f128 {
     const exponent_bias = (1 << (exponent_bits - 1)) - 1;
     const implicit_bit = 1 << mantissa_bits;
 
-    const exp: u128 = (u64.bit_count - 1) - @clz(u64, a);
+    const exp: u128 = (64 - 1) - @clz(u64, a);
     const shift: u7 = mantissa_bits - @intCast(u7, exp);
 
     var result: u128 = (@intCast(u128, a) << shift) ^ implicit_bit;
@@ -23,6 +23,6 @@ pub fn __floatunditf(a: u64) callconv(.C) f128 {
     return @bitCast(f128, result);
 }
 
-test "import floatunditf" {
+test {
     _ = @import("floatunditf_test.zig");
 }

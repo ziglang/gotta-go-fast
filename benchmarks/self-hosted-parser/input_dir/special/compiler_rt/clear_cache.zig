@@ -1,6 +1,7 @@
 const std = @import("std");
-const arch = std.builtin.cpu.arch;
-const os = std.builtin.os.tag;
+const builtin = @import("builtin");
+const arch = builtin.cpu.arch;
+const os = builtin.os.tag;
 
 // Ported from llvm-project d32170dbd5b0d54436537b6b75beaf44324e0c28
 
@@ -39,7 +40,7 @@ pub fn clear_cache(start: usize, end: usize) callconv(.C) void {
         else => false,
     };
     const apple = switch (os) {
-        .ios, .macosx, .watchos, .tvos => true,
+        .ios, .macos, .watchos, .tvos => true,
         else => false,
     };
     if (x86) {
@@ -88,7 +89,7 @@ pub fn clear_cache(start: usize, end: usize) callconv(.C) void {
         asm volatile (
             \\mrs %[x], ctr_el0
             \\
-            : [x] "=r" (ctr_el0)
+            : [x] "=r" (ctr_el0),
         );
         // The DC and IC instructions must use 64-bit registers so we don't use
         // uintptr_t in case this runs in an IPL32 environment.
@@ -101,7 +102,7 @@ pub fn clear_cache(start: usize, end: usize) callconv(.C) void {
             while (addr < end) : (addr += dcache_line_size) {
                 asm volatile ("dc cvau, %[addr]"
                     :
-                    : [addr] "r" (addr)
+                    : [addr] "r" (addr),
                 );
             }
         }
@@ -114,7 +115,7 @@ pub fn clear_cache(start: usize, end: usize) callconv(.C) void {
             while (addr < end) : (addr += icache_line_size) {
                 asm volatile ("ic ivau, %[addr]"
                     :
-                    : [addr] "r" (addr)
+                    : [addr] "r" (addr),
                 );
             }
         }
@@ -156,7 +157,7 @@ pub fn clear_cache(start: usize, end: usize) callconv(.C) void {
     }
 }
 
-const linkage = if (std.builtin.is_test) std.builtin.GlobalLinkage.Internal else std.builtin.GlobalLinkage.Weak;
+const linkage = if (builtin.is_test) std.builtin.GlobalLinkage.Internal else std.builtin.GlobalLinkage.Weak;
 
 fn exportIt() void {
     @export(clear_cache, .{ .name = "__clear_cache", .linkage = linkage });

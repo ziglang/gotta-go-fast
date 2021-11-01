@@ -1,12 +1,15 @@
-const builtin = @import("builtin");
 const compiler_rt = @import("../compiler_rt.zig");
+const std = @import("std");
+const builtin = @import("builtin");
+const is_test = builtin.is_test;
+const native_endian = builtin.cpu.arch.endian();
 
 // Ported from git@github.com:llvm-project/llvm-project-20170507.git
 // ae684fad6d34858c014c94da69c15e7774a633c3
 // 2018-08-13
 
 pub fn __multi3(a: i128, b: i128) callconv(.C) i128 {
-    @setRuntimeSafety(builtin.is_test);
+    @setRuntimeSafety(is_test);
     const x = twords{ .all = a };
     const y = twords{ .all = b };
     var r = twords{ .all = __mulddi3(x.s.low, y.s.low) };
@@ -45,7 +48,7 @@ const twords = extern union {
     all: i128,
     s: S,
 
-    const S = if (builtin.endian == .Little)
+    const S = if (native_endian == .Little)
         struct {
             low: u64,
             high: u64,
@@ -57,6 +60,6 @@ const twords = extern union {
         };
 };
 
-test "import multi3" {
+test {
     _ = @import("multi3_test.zig");
 }

@@ -91,3 +91,11 @@ After cloning this repository:
 ```
 zig build run -- $PATH_TO_ZIG_GIT_REPO
 ```
+
+## Adding a Benchmark
+
+First add an entry in `manifest.json`. Next, you can test it like this:
+
+```
+zig run bench.zig --pkg-begin app ./benchmarks/foo/bar.zig --pkg-end -O ReleaseFast -- zig
+```

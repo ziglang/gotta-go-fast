@@ -1,4 +1,5 @@
 const std = @import("../std.zig");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Target = std.Target;
 const mem = std.mem;
@@ -106,11 +107,11 @@ pub const CrossTarget = struct {
             .kfreebsd,
             .lv2,
             .solaris,
+            .zos,
             .haiku,
             .minix,
             .rtems,
             .nacl,
-            .cnk,
             .aix,
             .cuda,
             .nvcl,
@@ -125,6 +126,10 @@ pub const CrossTarget = struct {
             .wasi,
             .emscripten,
             .uefi,
+            .opencl,
+            .glsl450,
+            .vulkan,
+            .plan9,
             .other,
             => {
                 self.os_version_min = .{ .none = {} };
@@ -132,7 +137,7 @@ pub const CrossTarget = struct {
             },
 
             .freebsd,
-            .macosx,
+            .macos,
             .ios,
             .tvos,
             .watchos,
@@ -224,7 +229,7 @@ pub const CrossTarget = struct {
             .dynamic_linker = DynamicLinker.init(args.dynamic_linker),
         };
 
-        var it = mem.split(args.arch_os_abi, "-");
+        var it = mem.split(u8, args.arch_os_abi, "-");
         const arch_name = it.next().?;
         const arch_is_native = mem.eql(u8, arch_name, "native");
         if (!arch_is_native) {
@@ -242,7 +247,7 @@ pub const CrossTarget = struct {
 
         const opt_abi_text = it.next();
         if (opt_abi_text) |abi_text| {
-            var abi_it = mem.split(abi_text, ".");
+            var abi_it = mem.split(u8, abi_text, ".");
             const abi = std.meta.stringToEnum(Target.Abi, abi_it.next().?) orelse
                 return error.UnknownApplicationBinaryInterface;
             result.abi = abi;
@@ -325,7 +330,7 @@ pub const CrossTarget = struct {
                 // This works when doing `zig build` because Zig generates a build executable using
                 // native CPU model & features. However this will not be accurate otherwise, and
                 // will need to be integrated with `std.zig.system.NativeTargetInfo.detect`.
-                return Target.current.cpu;
+                return builtin.cpu;
             },
             .baseline => {
                 var adjusted_baseline = Target.Cpu.baseline(self.getCpuArch());
@@ -336,7 +341,7 @@ pub const CrossTarget = struct {
                 // This works when doing `zig build` because Zig generates a build executable using
                 // native CPU model & features. However this will not be accurate otherwise, and
                 // will need to be integrated with `std.zig.system.NativeTargetInfo.detect`.
-                return Target.current.cpu;
+                return builtin.cpu;
             } else {
                 var adjusted_baseline = Target.Cpu.baseline(self.getCpuArch());
                 self.updateCpuFeatures(&adjusted_baseline.features);
@@ -351,7 +356,7 @@ pub const CrossTarget = struct {
     }
 
     pub fn getCpuArch(self: CrossTarget) Target.Cpu.Arch {
-        return self.cpu_arch orelse Target.current.cpu.arch;
+        return self.cpu_arch orelse builtin.cpu.arch;
     }
 
     pub fn getCpuModel(self: CrossTarget) *const Target.Cpu.Model {
@@ -367,10 +372,10 @@ pub const CrossTarget = struct {
 
     /// TODO deprecated, use `std.zig.system.NativeTargetInfo.detect`.
     pub fn getOs(self: CrossTarget) Target.Os {
-        // `Target.current.os` works when doing `zig build` because Zig generates a build executable using
+        // `builtin.os` works when doing `zig build` because Zig generates a build executable using
         // native OS version range. However this will not be accurate otherwise, and
         // will need to be integrated with `std.zig.system.NativeTargetInfo.detect`.
-        var adjusted_os = if (self.os_tag) |os_tag| Target.Os.defaultVersionRange(os_tag) else Target.current.os;
+        var adjusted_os = if (self.os_tag) |os_tag| os_tag.defaultVersionRange() else builtin.os;
 
         if (self.os_version_min) |min| switch (min) {
             .none => {},
@@ -399,7 +404,7 @@ pub const CrossTarget = struct {
     }
 
     pub fn getOsTag(self: CrossTarget) Target.Os.Tag {
-        return self.os_tag orelse Target.current.os.tag;
+        return self.os_tag orelse builtin.os.tag;
     }
 
     /// TODO deprecated, use `std.zig.system.NativeTargetInfo.detect`.
@@ -426,7 +431,7 @@ pub const CrossTarget = struct {
             // This works when doing `zig build` because Zig generates a build executable using
             // native CPU model & features. However this will not be accurate otherwise, and
             // will need to be integrated with `std.zig.system.NativeTargetInfo.detect`.
-            return Target.current.abi;
+            return builtin.abi;
         }
 
         return Target.Abi.default(self.getCpuArch(), self.getOs());
@@ -442,6 +447,10 @@ pub const CrossTarget = struct {
 
     pub fn isNetBSD(self: CrossTarget) bool {
         return self.getOsTag() == .netbsd;
+    }
+
+    pub fn isOpenBSD(self: CrossTarget) bool {
+        return self.getOsTag() == .openbsd;
     }
 
     pub fn isUefi(self: CrossTarget) bool {
@@ -460,16 +469,12 @@ pub const CrossTarget = struct {
         return self.getOsTag() == .windows;
     }
 
-    pub fn oFileExt(self: CrossTarget) [:0]const u8 {
-        return self.getAbi().oFileExt();
-    }
-
     pub fn exeFileExt(self: CrossTarget) [:0]const u8 {
         return Target.exeFileExtSimple(self.getCpuArch(), self.getOsTag());
     }
 
     pub fn staticLibSuffix(self: CrossTarget) [:0]const u8 {
-        return Target.staticLibSuffix_cpu_arch_abi(self.getCpuArch(), self.getAbi());
+        return Target.staticLibSuffix_os_abi(self.getOsTag(), self.getAbi());
     }
 
     pub fn dynamicLibSuffix(self: CrossTarget) [:0]const u8 {
@@ -477,7 +482,7 @@ pub const CrossTarget = struct {
     }
 
     pub fn libPrefix(self: CrossTarget) [:0]const u8 {
-        return Target.libPrefix_cpu_arch_abi(self.getCpuArch(), self.getAbi());
+        return Target.libPrefix_os_abi(self.getOsTag(), self.getAbi());
     }
 
     pub fn isNativeCpu(self: CrossTarget) bool {
@@ -491,13 +496,17 @@ pub const CrossTarget = struct {
             self.dynamic_linker.get() == null and self.glibc_version == null;
     }
 
+    pub fn isNativeAbi(self: CrossTarget) bool {
+        return self.os_tag == null and self.abi == null;
+    }
+
     pub fn isNative(self: CrossTarget) bool {
-        return self.isNativeCpu() and self.isNativeOs() and self.abi == null;
+        return self.isNativeCpu() and self.isNativeOs() and self.isNativeAbi();
     }
 
     pub fn zigTriple(self: CrossTarget, allocator: *mem.Allocator) error{OutOfMemory}![]u8 {
         if (self.isNative()) {
-            return mem.dupe(allocator, u8, "native");
+            return allocator.dupe(u8, "native");
         }
 
         const arch_name = if (self.cpu_arch) |arch| @tagName(arch) else "native";
@@ -506,29 +515,29 @@ pub const CrossTarget = struct {
         var result = std.ArrayList(u8).init(allocator);
         defer result.deinit();
 
-        try result.outStream().print("{}-{}", .{ arch_name, os_name });
+        try result.writer().print("{s}-{s}", .{ arch_name, os_name });
 
         // The zig target syntax does not allow specifying a max os version with no min, so
         // if either are present, we need the min.
         if (self.os_version_min != null or self.os_version_max != null) {
             switch (self.getOsVersionMin()) {
                 .none => {},
-                .semver => |v| try result.outStream().print(".{}", .{v}),
-                .windows => |v| try result.outStream().print(".{}", .{@tagName(v)}),
+                .semver => |v| try result.writer().print(".{}", .{v}),
+                .windows => |v| try result.writer().print("{s}", .{v}),
             }
         }
         if (self.os_version_max) |max| {
             switch (max) {
                 .none => {},
-                .semver => |v| try result.outStream().print("...{}", .{v}),
-                .windows => |v| try result.outStream().print("...{}", .{@tagName(v)}),
+                .semver => |v| try result.writer().print("...{}", .{v}),
+                .windows => |v| try result.writer().print("..{s}", .{v}),
             }
         }
 
         if (self.glibc_version) |v| {
-            try result.outStream().print("-{}.{}", .{ @tagName(self.getAbi()), v });
+            try result.writer().print("-{s}.{}", .{ @tagName(self.getAbi()), v });
         } else if (self.abi) |abi| {
-            try result.outStream().print("-{}", .{@tagName(abi)});
+            try result.writer().print("-{s}", .{@tagName(abi)});
         }
 
         return result.toOwnedSlice();
@@ -573,7 +582,7 @@ pub const CrossTarget = struct {
         const os = switch (self.getOsTag()) {
             .windows => "windows",
             .linux => "linux",
-            .macosx => "macos",
+            .macos => "macos",
             else => return error.UnsupportedVcpkgOperatingSystem,
         };
 
@@ -582,7 +591,7 @@ pub const CrossTarget = struct {
             .Dynamic => "",
         };
 
-        return std.fmt.allocPrint(allocator, "{}-{}{}", .{ arch, os, static_suffix });
+        return std.fmt.allocPrint(allocator, "{s}-{s}{s}", .{ arch, os, static_suffix });
     }
 
     pub const Executor = union(enum) {
@@ -590,6 +599,7 @@ pub const CrossTarget = struct {
         qemu: []const u8,
         wine: []const u8,
         wasmtime: []const u8,
+        darling: []const u8,
         unavailable,
     };
 
@@ -598,13 +608,21 @@ pub const CrossTarget = struct {
     pub fn getExternalExecutor(self: CrossTarget) Executor {
         const cpu_arch = self.getCpuArch();
         const os_tag = self.getOsTag();
-        const os_match = os_tag == Target.current.os.tag;
+        const os_match = os_tag == builtin.os.tag;
 
         // If the OS and CPU arch match, the binary can be considered native.
-        if (os_match and cpu_arch == Target.current.cpu.arch) {
+        // TODO additionally match the CPU features. This `getExternalExecutor` function should
+        // be moved to std.Target and match any chosen target against the native target.
+        if (os_match and cpu_arch == builtin.cpu.arch) {
             // However, we also need to verify that the dynamic linker path is valid.
-            // TODO Until that is implemented, we prevent returning `.native` when the OS is non-native.
             if (self.os_tag == null) {
+                return .native;
+            }
+            // TODO here we call toTarget, a deprecated function, because of the above TODO about moving
+            // this code to std.Target.
+            const opt_dl = self.dynamic_linker.get() orelse self.toTarget().standardDynamicLinkerPath().get();
+            if (opt_dl) |dl| blk: {
+                std.fs.cwd().access(dl, .{}) catch break :blk;
                 return .native;
             }
         }
@@ -643,6 +661,15 @@ pub const CrossTarget = struct {
                 32 => return Executor{ .wasmtime = "wasmtime" },
                 else => return .unavailable,
             },
+            .macos => {
+                // TODO loosen this check once upstream adds QEMU-based emulation
+                // layer for non-host architectures:
+                // https://github.com/darlinghq/darling/issues/863
+                if (cpu_arch != builtin.cpu.arch) {
+                    return .unavailable;
+                }
+                return Executor{ .darling = "darling" };
+            },
             else => return .unavailable,
         }
     }
@@ -668,7 +695,7 @@ pub const CrossTarget = struct {
     }
 
     fn parseOs(result: *CrossTarget, diags: *ParseOptions.Diagnostics, text: []const u8) !void {
-        var it = mem.split(text, ".");
+        var it = mem.split(u8, text, ".");
         const os_name = it.next().?;
         diags.os_name = os_name;
         const os_is_native = mem.eql(u8, os_name, "native");
@@ -690,11 +717,11 @@ pub const CrossTarget = struct {
             .kfreebsd,
             .lv2,
             .solaris,
+            .zos,
             .haiku,
             .minix,
             .rtems,
             .nacl,
-            .cnk,
             .aix,
             .cuda,
             .nvcl,
@@ -709,11 +736,15 @@ pub const CrossTarget = struct {
             .wasi,
             .emscripten,
             .uefi,
+            .opencl,
+            .glsl450,
+            .vulkan,
+            .plan9,
             .other,
             => return error.InvalidOperatingSystemVersion,
 
             .freebsd,
-            .macosx,
+            .macos,
             .ios,
             .tvos,
             .watchos,
@@ -722,7 +753,7 @@ pub const CrossTarget = struct {
             .linux,
             .dragonfly,
             => {
-                var range_it = mem.split(version_text, "...");
+                var range_it = mem.split(u8, version_text, "...");
 
                 const min_text = range_it.next().?;
                 const min_ver = SemVer.parse(min_text) catch |err| switch (err) {
@@ -742,7 +773,7 @@ pub const CrossTarget = struct {
             },
 
             .windows => {
-                var range_it = mem.split(version_text, "...");
+                var range_it = mem.split(u8, version_text, "...");
 
                 const min_text = range_it.next().?;
                 const min_ver = std.meta.stringToEnum(Target.Os.WindowsVersion, min_text) orelse
@@ -759,7 +790,7 @@ pub const CrossTarget = struct {
 };
 
 test "CrossTarget.parse" {
-    if (Target.current.isGnuLibC()) {
+    if (builtin.target.isGnuLibC()) {
         var cross_target = try CrossTarget.parse(.{});
         cross_target.setGnuLibCVersion(2, 1, 1);
 
@@ -769,11 +800,11 @@ test "CrossTarget.parse" {
         var buf: [256]u8 = undefined;
         const triple = std.fmt.bufPrint(
             buf[0..],
-            "native-native-{}.2.1.1",
-            .{@tagName(std.Target.current.abi)},
+            "native-native-{s}.2.1.1",
+            .{@tagName(builtin.abi)},
         ) catch unreachable;
 
-        std.testing.expectEqualSlices(u8, triple, text);
+        try std.testing.expectEqualSlices(u8, triple, text);
     }
     {
         const cross_target = try CrossTarget.parse(.{
@@ -781,18 +812,18 @@ test "CrossTarget.parse" {
             .cpu_features = "native",
         });
 
-        std.testing.expect(cross_target.cpu_arch.? == .aarch64);
-        std.testing.expect(cross_target.cpu_model == .native);
+        try std.testing.expect(cross_target.cpu_arch.? == .aarch64);
+        try std.testing.expect(cross_target.cpu_model == .native);
     }
     {
         const cross_target = try CrossTarget.parse(.{ .arch_os_abi = "native" });
 
-        std.testing.expect(cross_target.cpu_arch == null);
-        std.testing.expect(cross_target.isNative());
+        try std.testing.expect(cross_target.cpu_arch == null);
+        try std.testing.expect(cross_target.isNative());
 
         const text = try cross_target.zigTriple(std.testing.allocator);
         defer std.testing.allocator.free(text);
-        std.testing.expectEqualSlices(u8, "native", text);
+        try std.testing.expectEqualSlices(u8, "native", text);
     }
     {
         const cross_target = try CrossTarget.parse(.{
@@ -801,18 +832,23 @@ test "CrossTarget.parse" {
         });
         const target = cross_target.toTarget();
 
-        std.testing.expect(target.os.tag == .linux);
-        std.testing.expect(target.abi == .gnu);
-        std.testing.expect(target.cpu.arch == .x86_64);
-        std.testing.expect(!Target.x86.featureSetHas(target.cpu.features, .sse));
-        std.testing.expect(!Target.x86.featureSetHas(target.cpu.features, .avx));
-        std.testing.expect(!Target.x86.featureSetHas(target.cpu.features, .cx8));
-        std.testing.expect(Target.x86.featureSetHas(target.cpu.features, .cmov));
-        std.testing.expect(Target.x86.featureSetHas(target.cpu.features, .fxsr));
+        try std.testing.expect(target.os.tag == .linux);
+        try std.testing.expect(target.abi == .gnu);
+        try std.testing.expect(target.cpu.arch == .x86_64);
+        try std.testing.expect(!Target.x86.featureSetHas(target.cpu.features, .sse));
+        try std.testing.expect(!Target.x86.featureSetHas(target.cpu.features, .avx));
+        try std.testing.expect(!Target.x86.featureSetHas(target.cpu.features, .cx8));
+        try std.testing.expect(Target.x86.featureSetHas(target.cpu.features, .cmov));
+        try std.testing.expect(Target.x86.featureSetHas(target.cpu.features, .fxsr));
+
+        try std.testing.expect(Target.x86.featureSetHasAny(target.cpu.features, .{ .sse, .avx, .cmov }));
+        try std.testing.expect(!Target.x86.featureSetHasAny(target.cpu.features, .{ .sse, .avx }));
+        try std.testing.expect(Target.x86.featureSetHasAll(target.cpu.features, .{ .mmx, .x87 }));
+        try std.testing.expect(!Target.x86.featureSetHasAll(target.cpu.features, .{ .mmx, .x87, .sse }));
 
         const text = try cross_target.zigTriple(std.testing.allocator);
         defer std.testing.allocator.free(text);
-        std.testing.expectEqualSlices(u8, "x86_64-linux-gnu", text);
+        try std.testing.expectEqualSlices(u8, "x86_64-linux-gnu", text);
     }
     {
         const cross_target = try CrossTarget.parse(.{
@@ -821,15 +857,15 @@ test "CrossTarget.parse" {
         });
         const target = cross_target.toTarget();
 
-        std.testing.expect(target.os.tag == .linux);
-        std.testing.expect(target.abi == .musleabihf);
-        std.testing.expect(target.cpu.arch == .arm);
-        std.testing.expect(target.cpu.model == &Target.arm.cpu.generic);
-        std.testing.expect(Target.arm.featureSetHas(target.cpu.features, .v8a));
+        try std.testing.expect(target.os.tag == .linux);
+        try std.testing.expect(target.abi == .musleabihf);
+        try std.testing.expect(target.cpu.arch == .arm);
+        try std.testing.expect(target.cpu.model == &Target.arm.cpu.generic);
+        try std.testing.expect(Target.arm.featureSetHas(target.cpu.features, .v8a));
 
         const text = try cross_target.zigTriple(std.testing.allocator);
         defer std.testing.allocator.free(text);
-        std.testing.expectEqualSlices(u8, "arm-linux-musleabihf", text);
+        try std.testing.expectEqualSlices(u8, "arm-linux-musleabihf", text);
     }
     {
         const cross_target = try CrossTarget.parse(.{
@@ -838,21 +874,21 @@ test "CrossTarget.parse" {
         });
         const target = cross_target.toTarget();
 
-        std.testing.expect(target.cpu.arch == .aarch64);
-        std.testing.expect(target.os.tag == .linux);
-        std.testing.expect(target.os.version_range.linux.range.min.major == 3);
-        std.testing.expect(target.os.version_range.linux.range.min.minor == 10);
-        std.testing.expect(target.os.version_range.linux.range.min.patch == 0);
-        std.testing.expect(target.os.version_range.linux.range.max.major == 4);
-        std.testing.expect(target.os.version_range.linux.range.max.minor == 4);
-        std.testing.expect(target.os.version_range.linux.range.max.patch == 1);
-        std.testing.expect(target.os.version_range.linux.glibc.major == 2);
-        std.testing.expect(target.os.version_range.linux.glibc.minor == 27);
-        std.testing.expect(target.os.version_range.linux.glibc.patch == 0);
-        std.testing.expect(target.abi == .gnu);
+        try std.testing.expect(target.cpu.arch == .aarch64);
+        try std.testing.expect(target.os.tag == .linux);
+        try std.testing.expect(target.os.version_range.linux.range.min.major == 3);
+        try std.testing.expect(target.os.version_range.linux.range.min.minor == 10);
+        try std.testing.expect(target.os.version_range.linux.range.min.patch == 0);
+        try std.testing.expect(target.os.version_range.linux.range.max.major == 4);
+        try std.testing.expect(target.os.version_range.linux.range.max.minor == 4);
+        try std.testing.expect(target.os.version_range.linux.range.max.patch == 1);
+        try std.testing.expect(target.os.version_range.linux.glibc.major == 2);
+        try std.testing.expect(target.os.version_range.linux.glibc.minor == 27);
+        try std.testing.expect(target.os.version_range.linux.glibc.patch == 0);
+        try std.testing.expect(target.abi == .gnu);
 
         const text = try cross_target.zigTriple(std.testing.allocator);
         defer std.testing.allocator.free(text);
-        std.testing.expectEqualSlices(u8, "aarch64-linux.3.10...4.4.1-gnu.2.27", text);
+        try std.testing.expectEqualSlices(u8, "aarch64-linux.3.10...4.4.1-gnu.2.27", text);
     }
 }

@@ -1,3 +1,5 @@
+const std = @import("../std.zig");
+
 /// A protocol is an interface identified by a GUID.
 pub const protocols = @import("uefi/protocols.zig");
 
@@ -12,7 +14,7 @@ pub var handle: Handle = undefined;
 pub var system_table: *tables.SystemTable = undefined;
 
 /// A handle to an event structure.
-pub const Event = *@Type(.Opaque);
+pub const Event = *opaque {};
 
 /// GUIDs must be align(8)
 pub const Guid = extern struct {
@@ -28,10 +30,11 @@ pub const Guid = extern struct {
         self: @This(),
         comptime f: []const u8,
         options: std.fmt.FormatOptions,
-        out_stream: var,
-    ) Errors!void {
+        writer: anytype,
+    ) !void {
+        _ = options;
         if (f.len == 0) {
-            return std.fmt.format(out_stream, "{x:0>8}-{x:0>4}-{x:0>4}-{x:0>2}{x:0>2}-{x:0>12}", .{
+            return std.fmt.format(writer, "{x:0>8}-{x:0>4}-{x:0>4}-{x:0>2}{x:0>2}-{x:0>12}", .{
                 self.time_low,
                 self.time_mid,
                 self.time_high_and_version,
@@ -43,10 +46,19 @@ pub const Guid = extern struct {
             @compileError("Unknown format character: '" ++ f ++ "'");
         }
     }
+
+    pub fn eql(a: std.os.uefi.Guid, b: std.os.uefi.Guid) bool {
+        return a.time_low == b.time_low and
+            a.time_mid == b.time_mid and
+            a.time_high_and_version == b.time_high_and_version and
+            a.clock_seq_high_and_reserved == b.clock_seq_high_and_reserved and
+            a.clock_seq_low == b.clock_seq_low and
+            std.mem.eql(u8, &a.node, &b.node);
+    }
 };
 
 /// An EFI Handle represents a collection of related interfaces.
-pub const Handle = *@Type(.Opaque);
+pub const Handle = *opaque {};
 
 /// This structure represents time information.
 pub const Time = extern struct {
@@ -103,4 +115,4 @@ pub const TimeCapabilities = extern struct {
 };
 
 /// File Handle as specified in the EFI Shell Spec
-pub const FileHandle = *@Type(.Opaque);
+pub const FileHandle = *opaque {};

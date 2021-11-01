@@ -7,8 +7,9 @@ pub const Locked = @import("event/locked.zig").Locked;
 pub const RwLock = @import("event/rwlock.zig").RwLock;
 pub const RwLocked = @import("event/rwlocked.zig").RwLocked;
 pub const Loop = @import("event/loop.zig").Loop;
+pub const WaitGroup = @import("event/wait_group.zig").WaitGroup;
 
-test "import event tests" {
+test {
     _ = @import("event/channel.zig");
     _ = @import("event/future.zig");
     _ = @import("event/group.zig");
@@ -18,4 +19,5 @@ test "import event tests" {
     _ = @import("event/rwlock.zig");
     _ = @import("event/rwlocked.zig");
     _ = @import("event/loop.zig");
+    _ = @import("event/wait_group.zig");
 }

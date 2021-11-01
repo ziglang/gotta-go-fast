@@ -1,5 +1,5 @@
 const std = @import("std.zig");
-const builtin = std.builtin;
+const builtin = @import("builtin");
 const testing = std.testing;
 
 pub fn once(comptime f: fn () void) Once(f) {
@@ -10,7 +10,7 @@ pub fn once(comptime f: fn () void) Once(f) {
 pub fn Once(comptime f: fn () void) type {
     return struct {
         done: bool = false,
-        mutex: std.Mutex = std.Mutex.init(),
+        mutex: std.Thread.Mutex = std.Thread.Mutex{},
 
         /// Call the function `f`.
         /// If `call` is invoked multiple times `f` will be executed only the
@@ -50,17 +50,18 @@ test "Once executes its function just once" {
         global_once.call();
         global_once.call();
     } else {
-        var threads: [10]*std.Thread = undefined;
-        defer for (threads) |handle| handle.wait();
+        var threads: [10]std.Thread = undefined;
+        defer for (threads) |handle| handle.join();
 
         for (threads) |*handle| {
-            handle.* = try std.Thread.spawn(@as(u8, 0), struct {
+            handle.* = try std.Thread.spawn(.{}, struct {
                 fn thread_fn(x: u8) void {
+                    _ = x;
                     global_once.call();
                 }
-            }.thread_fn);
+            }.thread_fn, .{0});
         }
     }
 
-    testing.expectEqual(@as(i32, 1), global_number);
+    try testing.expectEqual(@as(i32, 1), global_number);
 }

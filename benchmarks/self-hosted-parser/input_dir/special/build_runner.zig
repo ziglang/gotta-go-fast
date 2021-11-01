@@ -36,14 +36,32 @@ pub fn main() !void {
         warn("Expected third argument to be cache root directory path\n", .{});
         return error.InvalidArgs;
     };
+    const global_cache_root = nextArg(args, &arg_idx) orelse {
+        warn("Expected third argument to be global cache root directory path\n", .{});
+        return error.InvalidArgs;
+    };
 
-    const builder = try Builder.create(allocator, zig_exe, build_root, cache_root);
+    const builder = try Builder.create(
+        allocator,
+        zig_exe,
+        build_root,
+        cache_root,
+        global_cache_root,
+    );
     defer builder.destroy();
 
     var targets = ArrayList([]const u8).init(allocator);
 
-    const stderr_stream = io.getStdErr().outStream();
-    const stdout_stream = io.getStdOut().outStream();
+    const stderr_stream = io.getStdErr().writer();
+    const stdout_stream = io.getStdOut().writer();
+
+    var install_prefix: ?[]const u8 = null;
+    var dir_list = Builder.DirList{};
+
+    // before arg parsing, check for the NO_COLOR environment variable
+    // if it exists, default the color setting to .off
+    // explicit --color arguments will still override this setting.
+    builder.color = if (std.process.hasEnvVarConstant("NO_COLOR")) .off else .auto;
 
     while (nextArg(args, &arg_idx)) |arg| {
         if (mem.startsWith(u8, arg, "-D")) {
@@ -64,22 +82,58 @@ pub fn main() !void {
         } else if (mem.startsWith(u8, arg, "-")) {
             if (mem.eql(u8, arg, "--verbose")) {
                 builder.verbose = true;
-            } else if (mem.eql(u8, arg, "--help")) {
+            } else if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                 return usage(builder, false, stdout_stream);
-            } else if (mem.eql(u8, arg, "--prefix")) {
-                builder.install_prefix = nextArg(args, &arg_idx) orelse {
-                    warn("Expected argument after --prefix\n\n", .{});
+            } else if (mem.eql(u8, arg, "-p") or mem.eql(u8, arg, "--prefix")) {
+                install_prefix = nextArg(args, &arg_idx) orelse {
+                    warn("Expected argument after {s}\n\n", .{arg});
                     return usageAndErr(builder, false, stderr_stream);
                 };
+            } else if (mem.eql(u8, arg, "--prefix-lib-dir")) {
+                dir_list.lib_dir = nextArg(args, &arg_idx) orelse {
+                    warn("Expected argument after {s}\n\n", .{arg});
+                    return usageAndErr(builder, false, stderr_stream);
+                };
+            } else if (mem.eql(u8, arg, "--prefix-exe-dir")) {
+                dir_list.exe_dir = nextArg(args, &arg_idx) orelse {
+                    warn("Expected argument after {s}\n\n", .{arg});
+                    return usageAndErr(builder, false, stderr_stream);
+                };
+            } else if (mem.eql(u8, arg, "--prefix-include-dir")) {
+                dir_list.include_dir = nextArg(args, &arg_idx) orelse {
+                    warn("Expected argument after {s}\n\n", .{arg});
+                    return usageAndErr(builder, false, stderr_stream);
+                };
+            } else if (mem.eql(u8, arg, "--sysroot")) {
+                const sysroot = nextArg(args, &arg_idx) orelse {
+                    warn("Expected argument after --sysroot\n\n", .{});
+                    return usageAndErr(builder, false, stderr_stream);
+                };
+                builder.sysroot = sysroot;
             } else if (mem.eql(u8, arg, "--search-prefix")) {
                 const search_prefix = nextArg(args, &arg_idx) orelse {
                     warn("Expected argument after --search-prefix\n\n", .{});
                     return usageAndErr(builder, false, stderr_stream);
                 };
                 builder.addSearchPrefix(search_prefix);
-            } else if (mem.eql(u8, arg, "--override-lib-dir")) {
+            } else if (mem.eql(u8, arg, "--libc")) {
+                const libc_file = nextArg(args, &arg_idx) orelse {
+                    warn("Expected argument after --libc\n\n", .{});
+                    return usageAndErr(builder, false, stderr_stream);
+                };
+                builder.libc_file = libc_file;
+            } else if (mem.eql(u8, arg, "--color")) {
+                const next_arg = nextArg(args, &arg_idx) orelse {
+                    warn("expected [auto|on|off] after --color", .{});
+                    return usageAndErr(builder, false, stderr_stream);
+                };
+                builder.color = std.meta.stringToEnum(@TypeOf(builder.color), next_arg) orelse {
+                    warn("expected [auto|on|off] after --color, found '{s}'", .{next_arg});
+                    return usageAndErr(builder, false, stderr_stream);
+                };
+            } else if (mem.eql(u8, arg, "--zig-lib-dir")) {
                 builder.override_lib_dir = nextArg(args, &arg_idx) orelse {
-                    warn("Expected argument after --override-lib-dir\n\n", .{});
+                    warn("Expected argument after --zig-lib-dir\n\n", .{});
                     return usageAndErr(builder, false, stderr_stream);
                 };
             } else if (mem.eql(u8, arg, "--verbose-tokenize")) {
@@ -88,8 +142,8 @@ pub fn main() !void {
                 builder.verbose_ast = true;
             } else if (mem.eql(u8, arg, "--verbose-link")) {
                 builder.verbose_link = true;
-            } else if (mem.eql(u8, arg, "--verbose-ir")) {
-                builder.verbose_ir = true;
+            } else if (mem.eql(u8, arg, "--verbose-air")) {
+                builder.verbose_air = true;
             } else if (mem.eql(u8, arg, "--verbose-llvm-ir")) {
                 builder.verbose_llvm_ir = true;
             } else if (mem.eql(u8, arg, "--verbose-cimport")) {
@@ -98,11 +152,13 @@ pub fn main() !void {
                 builder.verbose_cc = true;
             } else if (mem.eql(u8, arg, "--verbose-llvm-cpu-features")) {
                 builder.verbose_llvm_cpu_features = true;
+            } else if (mem.eql(u8, arg, "--prominent-compile-errors")) {
+                builder.prominent_compile_errors = true;
             } else if (mem.eql(u8, arg, "--")) {
                 builder.args = argsRest(args, arg_idx);
                 break;
             } else {
-                warn("Unrecognized argument: {}\n\n", .{arg});
+                warn("Unrecognized argument: {s}\n\n", .{arg});
                 return usageAndErr(builder, false, stderr_stream);
             }
         } else {
@@ -110,13 +166,13 @@ pub fn main() !void {
         }
     }
 
-    builder.resolveInstallPrefix();
+    builder.resolveInstallPrefix(install_prefix, dir_list);
     try runBuild(builder);
 
     if (builder.validateUserInputDidItFail())
         return usageAndErr(builder, true, stderr_stream);
 
-    builder.make(targets.span()) catch |err| {
+    builder.make(targets.items) catch |err| {
         switch (err) {
             error.InvalidStepName => {
                 return usageAndErr(builder, true, stderr_stream);
@@ -128,44 +184,52 @@ pub fn main() !void {
 }
 
 fn runBuild(builder: *Builder) anyerror!void {
-    switch (@typeInfo(@TypeOf(root.build).ReturnType)) {
+    switch (@typeInfo(@typeInfo(@TypeOf(root.build)).Fn.return_type.?)) {
         .Void => root.build(builder),
         .ErrorUnion => try root.build(builder),
         else => @compileError("expected return type of build to be 'void' or '!void'"),
     }
 }
 
-fn usage(builder: *Builder, already_ran_build: bool, out_stream: var) !void {
+fn usage(builder: *Builder, already_ran_build: bool, out_stream: anytype) !void {
     // run the build script to collect the options
     if (!already_ran_build) {
-        builder.setInstallPrefix(null);
-        builder.resolveInstallPrefix();
+        builder.resolveInstallPrefix(null, .{});
         try runBuild(builder);
     }
 
     try out_stream.print(
-        \\Usage: {} build [steps] [options]
+        \\Usage: {s} build [steps] [options]
         \\
         \\Steps:
         \\
     , .{builder.zig_exe});
 
     const allocator = builder.allocator;
-    for (builder.top_level_steps.span()) |top_level_step| {
+    for (builder.top_level_steps.items) |top_level_step| {
         const name = if (&top_level_step.step == builder.default_step)
-            try fmt.allocPrint(allocator, "{} (default)", .{top_level_step.step.name})
+            try fmt.allocPrint(allocator, "{s} (default)", .{top_level_step.step.name})
         else
             top_level_step.step.name;
-        try out_stream.print("  {s:22} {}\n", .{ name, top_level_step.description });
+        try out_stream.print("  {s:<28} {s}\n", .{ name, top_level_step.description });
     }
 
     try out_stream.writeAll(
         \\
         \\General Options:
-        \\  --help                 Print this help and exit
-        \\  --verbose              Print commands before executing them
-        \\  --prefix [path]        Override default install prefix
-        \\  --search-prefix [path] Add a path to look for binaries, libraries, headers
+        \\  -p, --prefix [path]          Override default install prefix
+        \\  --prefix-lib-dir [path]      Override default library directory path
+        \\  --prefix-exe-dir [path]      Override default executable directory path
+        \\  --prefix-include-dir [path]  Override default include directory path
+        \\
+        \\  --sysroot [path]             Set the system root directory (usually /)
+        \\  --search-prefix [path]       Add a path to look for binaries, libraries, headers
+        \\  --libc [file]                Provide a file which specifies libc paths
+        \\
+        \\  -h, --help                   Print this help and exit
+        \\  --verbose                    Print commands before executing them
+        \\  --color [auto|off|on]        Enable or disable colored error messages
+        \\  --prominent-compile-errors   Output compile errors formatted for a human to read
         \\
         \\Project-Specific Options:
         \\
@@ -174,35 +238,42 @@ fn usage(builder: *Builder, already_ran_build: bool, out_stream: var) !void {
     if (builder.available_options_list.items.len == 0) {
         try out_stream.print("  (none)\n", .{});
     } else {
-        for (builder.available_options_list.span()) |option| {
-            const name = try fmt.allocPrint(allocator, "  -D{}=[{}]", .{
+        for (builder.available_options_list.items) |option| {
+            const name = try fmt.allocPrint(allocator, "  -D{s}=[{s}]", .{
                 option.name,
-                Builder.typeIdName(option.type_id),
+                @tagName(option.type_id),
             });
             defer allocator.free(name);
-            try out_stream.print("{s:24} {}\n", .{ name, option.description });
+            try out_stream.print("{s:<30} {s}\n", .{ name, option.description });
+            if (option.enum_options) |enum_options| {
+                const padding = " " ** 33;
+                try out_stream.writeAll(padding ++ "Supported Values:\n");
+                for (enum_options) |enum_option| {
+                    try out_stream.print(padding ++ "  {s}\n", .{enum_option});
+                }
+            }
         }
     }
 
     try out_stream.writeAll(
         \\
         \\Advanced Options:
-        \\  --build-file [file]         Override path to build.zig
-        \\  --cache-dir [path]          Override path to zig cache directory
-        \\  --override-lib-dir [arg]    Override path to Zig lib directory
-        \\  --verbose-tokenize          Enable compiler debug output for tokenization
-        \\  --verbose-ast               Enable compiler debug output for parsing into an AST
-        \\  --verbose-link              Enable compiler debug output for linking
-        \\  --verbose-ir                Enable compiler debug output for Zig IR
-        \\  --verbose-llvm-ir           Enable compiler debug output for LLVM IR
-        \\  --verbose-cimport           Enable compiler debug output for C imports
-        \\  --verbose-cc                Enable compiler debug output for C compilation
-        \\  --verbose-llvm-cpu-features Enable compiler debug output for LLVM CPU features
+        \\  --build-file [file]          Override path to build.zig
+        \\  --cache-dir [path]           Override path to zig cache directory
+        \\  --zig-lib-dir [arg]          Override path to Zig lib directory
+        \\  --verbose-tokenize           Enable compiler debug output for tokenization
+        \\  --verbose-ast                Enable compiler debug output for parsing into an AST
+        \\  --verbose-link               Enable compiler debug output for linking
+        \\  --verbose-air                Enable compiler debug output for Zig AIR
+        \\  --verbose-llvm-ir            Enable compiler debug output for LLVM IR
+        \\  --verbose-cimport            Enable compiler debug output for C imports
+        \\  --verbose-cc                 Enable compiler debug output for C compilation
+        \\  --verbose-llvm-cpu-features  Enable compiler debug output for LLVM CPU features
         \\
     );
 }
 
-fn usageAndErr(builder: *Builder, already_ran_build: bool, out_stream: var) void {
+fn usageAndErr(builder: *Builder, already_ran_build: bool, out_stream: anytype) void {
     usage(builder, already_ran_build, out_stream) catch {};
     process.exit(1);
 }

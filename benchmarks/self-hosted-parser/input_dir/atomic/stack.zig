@@ -1,5 +1,6 @@
-const assert = std.debug.assert;
+const std = @import("../std.zig");
 const builtin = @import("builtin");
+const assert = std.debug.assert;
 const expect = std.testing.expect;
 
 /// Many reader, many writer, non-allocating, thread-safe
@@ -67,7 +68,6 @@ pub fn Stack(comptime T: type) type {
     };
 }
 
-const std = @import("../std.zig");
 const Context = struct {
     allocator: *std.mem.Allocator,
     stack: *Stack(i32),
@@ -105,31 +105,31 @@ test "std.atomic.stack" {
         {
             var i: usize = 0;
             while (i < put_thread_count) : (i += 1) {
-                expect(startPuts(&context) == 0);
+                try expect(startPuts(&context) == 0);
             }
         }
         context.puts_done = true;
         {
             var i: usize = 0;
             while (i < put_thread_count) : (i += 1) {
-                expect(startGets(&context) == 0);
+                try expect(startGets(&context) == 0);
             }
         }
     } else {
-        var putters: [put_thread_count]*std.Thread = undefined;
+        var putters: [put_thread_count]std.Thread = undefined;
         for (putters) |*t| {
-            t.* = try std.Thread.spawn(&context, startPuts);
+            t.* = try std.Thread.spawn(.{}, startPuts, .{&context});
         }
-        var getters: [put_thread_count]*std.Thread = undefined;
+        var getters: [put_thread_count]std.Thread = undefined;
         for (getters) |*t| {
-            t.* = try std.Thread.spawn(&context, startGets);
+            t.* = try std.Thread.spawn(.{}, startGets, .{&context});
         }
 
         for (putters) |t|
-            t.wait();
+            t.join();
         @atomicStore(bool, &context.puts_done, true, .SeqCst);
         for (getters) |t|
-            t.wait();
+            t.join();
     }
 
     if (context.put_sum != context.get_sum) {
@@ -147,10 +147,11 @@ test "std.atomic.stack" {
 
 fn startPuts(ctx: *Context) u8 {
     var put_count: usize = puts_per_thread;
-    var r = std.rand.DefaultPrng.init(0xdeadbeef);
+    var prng = std.rand.DefaultPrng.init(0xdeadbeef);
+    const random = prng.random();
     while (put_count != 0) : (put_count -= 1) {
         std.time.sleep(1); // let the os scheduler be our fuzz
-        const x = @bitCast(i32, r.random.int(u32));
+        const x = @bitCast(i32, random.int(u32));
         const node = ctx.allocator.create(Stack(i32).Node) catch unreachable;
         node.* = Stack(i32).Node{
             .next = undefined,

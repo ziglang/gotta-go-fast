@@ -74,18 +74,18 @@ fn encodesTo(decoded: []const u8, encoded: []const u8) bool {
 
 test "encodesTo" {
     // same
-    testing.expectEqual(true, encodesTo("false", "false"));
+    try testing.expectEqual(true, encodesTo("false", "false"));
     // totally different
-    testing.expectEqual(false, encodesTo("false", "true"));
+    try testing.expectEqual(false, encodesTo("false", "true"));
     // different lengths
-    testing.expectEqual(false, encodesTo("false", "other"));
+    try testing.expectEqual(false, encodesTo("false", "other"));
     // with escape
-    testing.expectEqual(true, encodesTo("\\", "\\\\"));
-    testing.expectEqual(true, encodesTo("with\nescape", "with\\nescape"));
+    try testing.expectEqual(true, encodesTo("\\", "\\\\"));
+    try testing.expectEqual(true, encodesTo("with\nescape", "with\\nescape"));
     // with unicode
-    testing.expectEqual(true, encodesTo("ą", "\\u0105"));
-    testing.expectEqual(true, encodesTo("😂", "\\ud83d\\ude02"));
-    testing.expectEqual(true, encodesTo("withąunicode😂", "with\\u0105unicode\\ud83d\\ude02"));
+    try testing.expectEqual(true, encodesTo("ą", "\\u0105"));
+    try testing.expectEqual(true, encodesTo("😂", "\\ud83d\\ude02"));
+    try testing.expectEqual(true, encodesTo("withąunicode😂", "with\\u0105unicode\\ud83d\\ude02"));
 }
 
 /// A single token slice into the parent string.
@@ -190,7 +190,7 @@ pub const StreamingParser = struct {
         p.number_is_integer = undefined;
     }
 
-    pub const State = enum {
+    pub const State = enum(u8) {
         // These must be first with these explicit values as we rely on them for indexing the
         // bit-stack directly and avoiding a branch.
         ObjectSeparator = 0,
@@ -239,9 +239,9 @@ pub const StreamingParser = struct {
         NullLiteral3,
 
         // Only call this function to generate array/object final state.
-        pub fn fromInt(x: var) State {
+        pub fn fromInt(x: anytype) State {
             debug.assert(x == 0 or x == 1);
-            const T = @TagType(State);
+            const T = std.meta.Tag(State);
             return @intToEnum(State, @intCast(T, x));
         }
     };
@@ -370,7 +370,7 @@ pub const StreamingParser = struct {
                 '}' => {
                     // unlikely
                     if (p.stack & 1 != object_bit) {
-                        return error.UnexpectedClosingBracket;
+                        return error.UnexpectedClosingBrace;
                     }
                     if (p.stack_used == 0) {
                         return error.TooManyClosingItems;
@@ -396,7 +396,7 @@ pub const StreamingParser = struct {
                 },
                 ']' => {
                     if (p.stack & 1 != array_bit) {
-                        return error.UnexpectedClosingBrace;
+                        return error.UnexpectedClosingBracket;
                     }
                     if (p.stack_used == 0) {
                         return error.TooManyClosingItems;
@@ -566,8 +566,11 @@ pub const StreamingParser = struct {
                     p.state = .ValueBeginNoClosing;
                 },
                 ']' => {
+                    if (p.stack & 1 != array_bit) {
+                        return error.UnexpectedClosingBracket;
+                    }
                     if (p.stack_used == 0) {
-                        return error.UnbalancedBrackets;
+                        return error.TooManyClosingItems;
                     }
 
                     p.state = .ValueEnd;
@@ -584,8 +587,12 @@ pub const StreamingParser = struct {
                     token.* = Token.ArrayEnd;
                 },
                 '}' => {
+                    // unlikely
+                    if (p.stack & 1 != object_bit) {
+                        return error.UnexpectedClosingBrace;
+                    }
                     if (p.stack_used == 0) {
-                        return error.UnbalancedBraces;
+                        return error.TooManyClosingItems;
                     }
 
                     p.state = .ValueEnd;
@@ -611,7 +618,7 @@ pub const StreamingParser = struct {
 
             .ObjectSeparator => switch (c) {
                 ':' => {
-                    p.state = .ValueBegin;
+                    p.state = .ValueBeginNoClosing;
                     p.after_string_state = .ValueEnd;
                 },
                 0x09, 0x0A, 0x0D, 0x20 => {
@@ -1093,6 +1100,10 @@ pub const TokenStream = struct {
         };
     }
 
+    fn stackUsed(self: *TokenStream) u8 {
+        return self.parser.stack_used + if (self.token != null) @as(u8, 1) else 0;
+    }
+
     pub fn next(self: *TokenStream) Error!?Token {
         if (self.token) |token| {
             self.token = null;
@@ -1126,9 +1137,9 @@ pub const TokenStream = struct {
     }
 };
 
-fn checkNext(p: *TokenStream, id: std.meta.TagType(Token)) void {
+fn checkNext(p: *TokenStream, id: std.meta.Tag(Token)) !void {
     const token = (p.next() catch unreachable).?;
-    debug.assert(std.meta.activeTag(token) == id);
+    try testing.expect(std.meta.activeTag(token) == id);
 }
 
 test "json.token" {
@@ -1151,37 +1162,53 @@ test "json.token" {
 
     var p = TokenStream.init(s);
 
-    checkNext(&p, .ObjectBegin);
-    checkNext(&p, .String); // Image
-    checkNext(&p, .ObjectBegin);
-    checkNext(&p, .String); // Width
-    checkNext(&p, .Number);
-    checkNext(&p, .String); // Height
-    checkNext(&p, .Number);
-    checkNext(&p, .String); // Title
-    checkNext(&p, .String);
-    checkNext(&p, .String); // Thumbnail
-    checkNext(&p, .ObjectBegin);
-    checkNext(&p, .String); // Url
-    checkNext(&p, .String);
-    checkNext(&p, .String); // Height
-    checkNext(&p, .Number);
-    checkNext(&p, .String); // Width
-    checkNext(&p, .Number);
-    checkNext(&p, .ObjectEnd);
-    checkNext(&p, .String); // Animated
-    checkNext(&p, .False);
-    checkNext(&p, .String); // IDs
-    checkNext(&p, .ArrayBegin);
-    checkNext(&p, .Number);
-    checkNext(&p, .Number);
-    checkNext(&p, .Number);
-    checkNext(&p, .Number);
-    checkNext(&p, .ArrayEnd);
-    checkNext(&p, .ObjectEnd);
-    checkNext(&p, .ObjectEnd);
+    try checkNext(&p, .ObjectBegin);
+    try checkNext(&p, .String); // Image
+    try checkNext(&p, .ObjectBegin);
+    try checkNext(&p, .String); // Width
+    try checkNext(&p, .Number);
+    try checkNext(&p, .String); // Height
+    try checkNext(&p, .Number);
+    try checkNext(&p, .String); // Title
+    try checkNext(&p, .String);
+    try checkNext(&p, .String); // Thumbnail
+    try checkNext(&p, .ObjectBegin);
+    try checkNext(&p, .String); // Url
+    try checkNext(&p, .String);
+    try checkNext(&p, .String); // Height
+    try checkNext(&p, .Number);
+    try checkNext(&p, .String); // Width
+    try checkNext(&p, .Number);
+    try checkNext(&p, .ObjectEnd);
+    try checkNext(&p, .String); // Animated
+    try checkNext(&p, .False);
+    try checkNext(&p, .String); // IDs
+    try checkNext(&p, .ArrayBegin);
+    try checkNext(&p, .Number);
+    try checkNext(&p, .Number);
+    try checkNext(&p, .Number);
+    try checkNext(&p, .Number);
+    try checkNext(&p, .ArrayEnd);
+    try checkNext(&p, .ObjectEnd);
+    try checkNext(&p, .ObjectEnd);
 
-    testing.expect((try p.next()) == null);
+    try testing.expect((try p.next()) == null);
+}
+
+test "json.token mismatched close" {
+    var p = TokenStream.init("[102, 111, 111 }");
+    try checkNext(&p, .ArrayBegin);
+    try checkNext(&p, .Number);
+    try checkNext(&p, .Number);
+    try checkNext(&p, .Number);
+    try testing.expectError(error.UnexpectedClosingBrace, p.next());
+}
+
+test "json.token premature object close" {
+    var p = TokenStream.init("{ \"key\": }");
+    try checkNext(&p, .ObjectBegin);
+    try checkNext(&p, .String);
+    try testing.expectError(error.InvalidValueBegin, p.next());
 }
 
 /// Validate a JSON string. This does not limit number precision so a decoder may not necessarily
@@ -1189,11 +1216,11 @@ test "json.token" {
 pub fn validate(s: []const u8) bool {
     var p = StreamingParser.init();
 
-    for (s) |c, i| {
+    for (s) |c| {
         var token1: ?Token = undefined;
         var token2: ?Token = undefined;
 
-        p.feed(c, &token1, &token2) catch |err| {
+        p.feed(c, &token1, &token2) catch {
             return false;
         };
     }
@@ -1202,13 +1229,18 @@ pub fn validate(s: []const u8) bool {
 }
 
 test "json.validate" {
-    testing.expect(validate("{}"));
+    try testing.expectEqual(true, validate("{}"));
+    try testing.expectEqual(true, validate("[]"));
+    try testing.expectEqual(true, validate("[{[[[[{}]]]]}]"));
+    try testing.expectEqual(false, validate("{]"));
+    try testing.expectEqual(false, validate("[}"));
+    try testing.expectEqual(false, validate("{{{{[]}}}]"));
 }
 
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const ArrayList = std.ArrayList;
-const StringHashMap = std.StringHashMap;
+const StringArrayHashMap = std.StringArrayHashMap;
 
 pub const ValueTree = struct {
     arena: ArenaAllocator,
@@ -1219,7 +1251,7 @@ pub const ValueTree = struct {
     }
 };
 
-pub const ObjectMap = StringHashMap(Value);
+pub const ObjectMap = StringArrayHashMap(Value);
 pub const Array = ArrayList(Value);
 
 /// Represents a JSON value
@@ -1229,6 +1261,7 @@ pub const Value = union(enum) {
     Bool: bool,
     Integer: i64,
     Float: f64,
+    NumberString: []const u8,
     String: []const u8,
     Array: Array,
     Object: ObjectMap,
@@ -1236,15 +1269,16 @@ pub const Value = union(enum) {
     pub fn jsonStringify(
         value: @This(),
         options: StringifyOptions,
-        out_stream: var,
+        out_stream: anytype,
     ) @TypeOf(out_stream).Error!void {
         switch (value) {
             .Null => try stringify(null, options, out_stream),
             .Bool => |inner| try stringify(inner, options, out_stream),
             .Integer => |inner| try stringify(inner, options, out_stream),
             .Float => |inner| try stringify(inner, options, out_stream),
+            .NumberString => |inner| try out_stream.writeAll(inner),
             .String => |inner| try stringify(inner, options, out_stream),
-            .Array => |inner| try stringify(inner.span(), options, out_stream),
+            .Array => |inner| try stringify(inner.items, options, out_stream),
             .Object => |inner| {
                 try out_stream.writeByte('{');
                 var field_output = false;
@@ -1264,14 +1298,14 @@ pub const Value = union(enum) {
                         try child_whitespace.outputIndent(out_stream);
                     }
 
-                    try stringify(entry.key, options, out_stream);
+                    try stringify(entry.key_ptr.*, options, out_stream);
                     try out_stream.writeByte(':');
                     if (child_options.whitespace) |child_whitespace| {
                         if (child_whitespace.separator) {
                             try out_stream.writeByte(' ');
                         }
                     }
-                    try stringify(entry.value, child_options, out_stream);
+                    try stringify(entry.value_ptr.*, child_options, out_stream);
                 }
                 if (field_output) {
                     if (options.whitespace) |whitespace| {
@@ -1288,7 +1322,7 @@ pub const Value = union(enum) {
         var held = std.debug.getStderrMutex().acquire();
         defer held.release();
 
-        const stderr = std.debug.getStderrStream();
+        const stderr = std.io.getStdErr().writer();
         std.json.stringify(self, std.json.StringifyOptions{ .whitespace = null }, stderr) catch return;
     }
 };
@@ -1297,32 +1331,38 @@ test "Value.jsonStringify" {
     {
         var buffer: [10]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buffer);
-        try @as(Value, .Null).jsonStringify(.{}, fbs.outStream());
-        testing.expectEqualSlices(u8, fbs.getWritten(), "null");
+        try @as(Value, .Null).jsonStringify(.{}, fbs.writer());
+        try testing.expectEqualSlices(u8, fbs.getWritten(), "null");
     }
     {
         var buffer: [10]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buffer);
-        try (Value{ .Bool = true }).jsonStringify(.{}, fbs.outStream());
-        testing.expectEqualSlices(u8, fbs.getWritten(), "true");
+        try (Value{ .Bool = true }).jsonStringify(.{}, fbs.writer());
+        try testing.expectEqualSlices(u8, fbs.getWritten(), "true");
     }
     {
         var buffer: [10]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buffer);
-        try (Value{ .Integer = 42 }).jsonStringify(.{}, fbs.outStream());
-        testing.expectEqualSlices(u8, fbs.getWritten(), "42");
+        try (Value{ .Integer = 42 }).jsonStringify(.{}, fbs.writer());
+        try testing.expectEqualSlices(u8, fbs.getWritten(), "42");
     }
     {
         var buffer: [10]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buffer);
-        try (Value{ .Float = 42 }).jsonStringify(.{}, fbs.outStream());
-        testing.expectEqualSlices(u8, fbs.getWritten(), "4.2e+01");
+        try (Value{ .NumberString = "43" }).jsonStringify(.{}, fbs.writer());
+        try testing.expectEqualSlices(u8, fbs.getWritten(), "43");
     }
     {
         var buffer: [10]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buffer);
-        try (Value{ .String = "weeee" }).jsonStringify(.{}, fbs.outStream());
-        testing.expectEqualSlices(u8, fbs.getWritten(), "\"weeee\"");
+        try (Value{ .Float = 42 }).jsonStringify(.{}, fbs.writer());
+        try testing.expectEqualSlices(u8, fbs.getWritten(), "4.2e+01");
+    }
+    {
+        var buffer: [10]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buffer);
+        try (Value{ .String = "weeee" }).jsonStringify(.{}, fbs.writer());
+        try testing.expectEqualSlices(u8, fbs.getWritten(), "\"weeee\"");
     }
     {
         var buffer: [10]u8 = undefined;
@@ -1330,12 +1370,12 @@ test "Value.jsonStringify" {
         var vals = [_]Value{
             .{ .Integer = 1 },
             .{ .Integer = 2 },
-            .{ .Integer = 3 },
+            .{ .NumberString = "3" },
         };
         try (Value{
             .Array = Array.fromOwnedSlice(undefined, &vals),
-        }).jsonStringify(.{}, fbs.outStream());
-        testing.expectEqualSlices(u8, fbs.getWritten(), "[1,2,3]");
+        }).jsonStringify(.{}, fbs.writer());
+        try testing.expectEqualSlices(u8, fbs.getWritten(), "[1,2,3]");
     }
     {
         var buffer: [10]u8 = undefined;
@@ -1343,9 +1383,68 @@ test "Value.jsonStringify" {
         var obj = ObjectMap.init(testing.allocator);
         defer obj.deinit();
         try obj.putNoClobber("a", .{ .String = "b" });
-        try (Value{ .Object = obj }).jsonStringify(.{}, fbs.outStream());
-        testing.expectEqualSlices(u8, fbs.getWritten(), "{\"a\":\"b\"}");
+        try (Value{ .Object = obj }).jsonStringify(.{}, fbs.writer());
+        try testing.expectEqualSlices(u8, fbs.getWritten(), "{\"a\":\"b\"}");
     }
+}
+
+/// parse tokens from a stream, returning `false` if they do not decode to `value`
+fn parsesTo(comptime T: type, value: T, tokens: *TokenStream, options: ParseOptions) !bool {
+    // TODO: should be able to write this function to not require an allocator
+    const tmp = try parse(T, tokens, options);
+    defer parseFree(T, tmp, options);
+
+    return parsedEqual(tmp, value);
+}
+
+/// Returns if a value returned by `parse` is deep-equal to another value
+fn parsedEqual(a: anytype, b: @TypeOf(a)) bool {
+    switch (@typeInfo(@TypeOf(a))) {
+        .Optional => {
+            if (a == null and b == null) return true;
+            if (a == null or b == null) return false;
+            return parsedEqual(a.?, b.?);
+        },
+        .Union => |info| {
+            if (info.tag_type) |UnionTag| {
+                const tag_a = std.meta.activeTag(a);
+                const tag_b = std.meta.activeTag(b);
+                if (tag_a != tag_b) return false;
+
+                inline for (info.fields) |field_info| {
+                    if (@field(UnionTag, field_info.name) == tag_a) {
+                        return parsedEqual(@field(a, field_info.name), @field(b, field_info.name));
+                    }
+                }
+                return false;
+            } else {
+                unreachable;
+            }
+        },
+        .Array => {
+            for (a) |e, i|
+                if (!parsedEqual(e, b[i])) return false;
+            return true;
+        },
+        .Struct => |info| {
+            inline for (info.fields) |field_info| {
+                if (!parsedEqual(@field(a, field_info.name), @field(b, field_info.name))) return false;
+            }
+            return true;
+        },
+        .Pointer => |ptrInfo| switch (ptrInfo.size) {
+            .One => return parsedEqual(a.*, b.*),
+            .Slice => {
+                if (a.len != b.len) return false;
+                for (a) |e, i|
+                    if (!parsedEqual(e, b[i])) return false;
+                return true;
+            },
+            .Many, .C => unreachable,
+        },
+        else => return a == b,
+    }
+    unreachable;
 }
 
 pub const ParseOptions = struct {
@@ -1357,9 +1456,155 @@ pub const ParseOptions = struct {
         Error,
         UseLast,
     } = .Error,
+
+    /// If false, finding an unknown field returns an error.
+    ignore_unknown_fields: bool = false,
+
+    allow_trailing_data: bool = false,
 };
 
-fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: ParseOptions) !T {
+const SkipValueError = error{UnexpectedJsonDepth} || TokenStream.Error;
+
+fn skipValue(tokens: *TokenStream) SkipValueError!void {
+    const original_depth = tokens.stackUsed();
+
+    // Return an error if no value is found
+    _ = try tokens.next();
+    if (tokens.stackUsed() < original_depth) return error.UnexpectedJsonDepth;
+    if (tokens.stackUsed() == original_depth) return;
+
+    while (try tokens.next()) |_| {
+        if (tokens.stackUsed() == original_depth) return;
+    }
+}
+
+test "skipValue" {
+    try skipValue(&TokenStream.init("false"));
+    try skipValue(&TokenStream.init("true"));
+    try skipValue(&TokenStream.init("null"));
+    try skipValue(&TokenStream.init("42"));
+    try skipValue(&TokenStream.init("42.0"));
+    try skipValue(&TokenStream.init("\"foo\""));
+    try skipValue(&TokenStream.init("[101, 111, 121]"));
+    try skipValue(&TokenStream.init("{}"));
+    try skipValue(&TokenStream.init("{\"foo\": \"bar\"}"));
+
+    { // An absurd number of nestings
+        const nestings = 256;
+
+        try testing.expectError(
+            error.TooManyNestedItems,
+            skipValue(&TokenStream.init("[" ** nestings ++ "]" ** nestings)),
+        );
+    }
+
+    { // Would a number token cause problems in a deeply-nested array?
+        const nestings = 255;
+        const deeply_nested_array = "[" ** nestings ++ "0.118, 999, 881.99, 911.9, 725, 3" ++ "]" ** nestings;
+
+        try skipValue(&TokenStream.init(deeply_nested_array));
+
+        try testing.expectError(
+            error.TooManyNestedItems,
+            skipValue(&TokenStream.init("[" ++ deeply_nested_array ++ "]")),
+        );
+    }
+
+    // Mismatched brace/square bracket
+    try testing.expectError(
+        error.UnexpectedClosingBrace,
+        skipValue(&TokenStream.init("[102, 111, 111}")),
+    );
+
+    { // should fail if no value found (e.g. immediate close of object)
+        var empty_object = TokenStream.init("{}");
+        assert(.ObjectBegin == (try empty_object.next()).?);
+        try testing.expectError(error.UnexpectedJsonDepth, skipValue(&empty_object));
+
+        var empty_array = TokenStream.init("[]");
+        assert(.ArrayBegin == (try empty_array.next()).?);
+        try testing.expectError(error.UnexpectedJsonDepth, skipValue(&empty_array));
+    }
+}
+
+fn ParseInternalError(comptime T: type) type {
+    // `inferred_types` is used to avoid infinite recursion for recursive type definitions.
+    const inferred_types = [_]type{};
+    return ParseInternalErrorImpl(T, &inferred_types);
+}
+
+fn ParseInternalErrorImpl(comptime T: type, comptime inferred_types: []const type) type {
+    for (inferred_types) |ty| {
+        if (T == ty) return error{};
+    }
+
+    switch (@typeInfo(T)) {
+        .Bool => return error{UnexpectedToken},
+        .Float, .ComptimeFloat => return error{UnexpectedToken} || std.fmt.ParseFloatError,
+        .Int, .ComptimeInt => {
+            return error{ UnexpectedToken, InvalidNumber, Overflow } ||
+                std.fmt.ParseIntError || std.fmt.ParseFloatError;
+        },
+        .Optional => |optionalInfo| {
+            return ParseInternalErrorImpl(optionalInfo.child, inferred_types ++ [_]type{T});
+        },
+        .Enum => return error{ UnexpectedToken, InvalidEnumTag } || std.fmt.ParseIntError ||
+            std.meta.IntToEnumError || std.meta.IntToEnumError,
+        .Union => |unionInfo| {
+            if (unionInfo.tag_type) |_| {
+                var errors = error{NoUnionMembersMatched};
+                for (unionInfo.fields) |u_field| {
+                    errors = errors || ParseInternalErrorImpl(u_field.field_type, inferred_types ++ [_]type{T});
+                }
+                return errors;
+            } else {
+                @compileError("Unable to parse into untagged union '" ++ @typeName(T) ++ "'");
+            }
+        },
+        .Struct => |structInfo| {
+            var errors = error{
+                DuplicateJSONField,
+                UnexpectedEndOfJson,
+                UnexpectedToken,
+                UnexpectedValue,
+                UnknownField,
+                MissingField,
+            } || SkipValueError || TokenStream.Error;
+            for (structInfo.fields) |field| {
+                errors = errors || ParseInternalErrorImpl(field.field_type, inferred_types ++ [_]type{T});
+            }
+            return errors;
+        },
+        .Array => |arrayInfo| {
+            return error{ UnexpectedEndOfJson, UnexpectedToken } || TokenStream.Error ||
+                UnescapeValidStringError ||
+                ParseInternalErrorImpl(arrayInfo.child, inferred_types ++ [_]type{T});
+        },
+        .Pointer => |ptrInfo| {
+            var errors = error{AllocatorRequired} || std.mem.Allocator.Error;
+            switch (ptrInfo.size) {
+                .One => {
+                    return errors || ParseInternalErrorImpl(ptrInfo.child, inferred_types ++ [_]type{T});
+                },
+                .Slice => {
+                    return errors || error{ UnexpectedEndOfJson, UnexpectedToken } ||
+                        ParseInternalErrorImpl(ptrInfo.child, inferred_types ++ [_]type{T}) ||
+                        UnescapeValidStringError || TokenStream.Error;
+                },
+                else => @compileError("Unable to parse into type '" ++ @typeName(T) ++ "'"),
+            }
+        },
+        else => return error{},
+    }
+    unreachable;
+}
+
+fn parseInternal(
+    comptime T: type,
+    token: Token,
+    tokens: *TokenStream,
+    options: ParseOptions,
+) ParseInternalError(T)!T {
     switch (@typeInfo(T)) {
         .Bool => {
             return switch (token) {
@@ -1380,8 +1625,12 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
                 .Number => |n| n,
                 else => return error.UnexpectedToken,
             };
-            if (!numberToken.is_integer) return error.UnexpectedToken;
-            return try std.fmt.parseInt(T, numberToken.slice(tokens.slice, tokens.i - 1), 10);
+            if (numberToken.is_integer)
+                return try std.fmt.parseInt(T, numberToken.slice(tokens.slice, tokens.i - 1), 10);
+            const float = try std.fmt.parseFloat(f128, numberToken.slice(tokens.slice, tokens.i - 1));
+            if (std.math.round(float) != float) return error.InvalidNumber;
+            if (float > std.math.maxInt(T) or float < std.math.minInt(T)) return error.Overflow;
+            return @floatToInt(T, float);
         },
         .Optional => |optionalInfo| {
             if (token == .Null) {
@@ -1418,13 +1667,18 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
             if (unionInfo.tag_type) |_| {
                 // try each of the union fields until we find one that matches
                 inline for (unionInfo.fields) |u_field| {
-                    if (parseInternal(u_field.field_type, token, tokens, options)) |value| {
+                    // take a copy of tokens so we can withhold mutations until success
+                    var tokens_copy = tokens.*;
+                    if (parseInternal(u_field.field_type, token, &tokens_copy, options)) |value| {
+                        tokens.* = tokens_copy;
                         return @unionInit(T, u_field.name, value);
                     } else |err| {
                         // Bubble up error.OutOfMemory
                         // Parsing some types won't have OutOfMemory in their
                         // error-sets, for the condition to be valid, merge it in.
                         if (@as(@TypeOf(err) || error{OutOfMemory}, err) == error.OutOfMemory) return err;
+                        // Bubble up AllocatorRequired, as it indicates missing option
+                        if (@as(@TypeOf(err) || error{AllocatorRequired}, err) == error.AllocatorRequired) return err;
                         // otherwise continue through the `inline for`
                     }
                 }
@@ -1442,7 +1696,7 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
             var fields_seen = [_]bool{false} ** structInfo.fields.len;
             errdefer {
                 inline for (structInfo.fields) |field, i| {
-                    if (fields_seen[i]) {
+                    if (fields_seen[i] and !field.is_comptime) {
                         parseFree(field.field_type, @field(r, field.name), options);
                     }
                 }
@@ -1453,6 +1707,8 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
                     .ObjectEnd => break,
                     .String => |stringToken| {
                         const key_source_slice = stringToken.slice(tokens.slice, tokens.i - 1);
+                        var child_options = options;
+                        child_options.allow_trailing_data = true;
                         var found = false;
                         inline for (structInfo.fields) |field, i| {
                             // TODO: using switches here segfault the compiler (#2727?)
@@ -1468,20 +1724,39 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
                                     //     .UseLast => {},
                                     // }
                                     if (options.duplicate_field_behavior == .UseFirst) {
+                                        // unconditonally ignore value. for comptime fields, this skips check against default_value
+                                        parseFree(field.field_type, try parse(field.field_type, tokens, child_options), child_options);
+                                        found = true;
                                         break;
                                     } else if (options.duplicate_field_behavior == .Error) {
                                         return error.DuplicateJSONField;
                                     } else if (options.duplicate_field_behavior == .UseLast) {
-                                        parseFree(field.field_type, @field(r, field.name), options);
+                                        if (!field.is_comptime) {
+                                            parseFree(field.field_type, @field(r, field.name), child_options);
+                                        }
+                                        fields_seen[i] = false;
                                     }
                                 }
-                                @field(r, field.name) = try parse(field.field_type, tokens, options);
+                                if (field.is_comptime) {
+                                    if (!try parsesTo(field.field_type, field.default_value.?, tokens, child_options)) {
+                                        return error.UnexpectedValue;
+                                    }
+                                } else {
+                                    @field(r, field.name) = try parse(field.field_type, tokens, child_options);
+                                }
                                 fields_seen[i] = true;
                                 found = true;
                                 break;
                             }
                         }
-                        if (!found) return error.UnknownField;
+                        if (!found) {
+                            if (options.ignore_unknown_fields) {
+                                try skipValue(tokens);
+                                continue;
+                            } else {
+                                return error.UnknownField;
+                            }
+                        }
                     },
                     else => return error.UnexpectedToken,
                 }
@@ -1489,7 +1764,9 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
             inline for (structInfo.fields) |field, i| {
                 if (!fields_seen[i]) {
                     if (field.default_value) |default| {
-                        @field(r, field.name) = default;
+                        if (!field.is_comptime) {
+                            @field(r, field.name) = default;
+                        }
                     } else {
                         return error.MissingField;
                     }
@@ -1502,14 +1779,17 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
                 .ArrayBegin => {
                     var r: T = undefined;
                     var i: usize = 0;
+                    var child_options = options;
+                    child_options.allow_trailing_data = true;
                     errdefer {
-                        while (true) : (i -= 1) {
+                        // Without the r.len check `r[i]` is not allowed
+                        if (r.len > 0) while (true) : (i -= 1) {
                             parseFree(arrayInfo.child, r[i], options);
                             if (i == 0) break;
-                        }
+                        };
                     }
                     while (i < r.len) : (i += 1) {
-                        r[i] = try parse(arrayInfo.child, tokens, options);
+                        r[i] = try parse(arrayInfo.child, tokens, child_options);
                     }
                     const tok = (try tokens.next()) orelse return error.UnexpectedEndOfJson;
                     switch (tok) {
@@ -1524,7 +1804,7 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
                     const source_slice = stringToken.slice(tokens.slice, tokens.i - 1);
                     switch (stringToken.escapes) {
                         .None => mem.copy(u8, &r, source_slice),
-                        .Some => try unescapeString(&r, source_slice),
+                        .Some => try unescapeValidString(&r, source_slice),
                     }
                     return r;
                 },
@@ -1535,7 +1815,8 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
             const allocator = options.allocator orelse return error.AllocatorRequired;
             switch (ptrInfo.size) {
                 .One => {
-                    const r: T = allocator.create(ptrInfo.child);
+                    const r: T = try allocator.create(ptrInfo.child);
+                    errdefer allocator.destroy(r);
                     r.* = try parseInternal(ptrInfo.child, token, tokens, options);
                     return r;
                 },
@@ -1557,7 +1838,7 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
                                     else => {},
                                 }
 
-                                try arraylist.ensureCapacity(arraylist.items.len + 1);
+                                try arraylist.ensureUnusedCapacity(1);
                                 const v = try parseInternal(ptrInfo.child, tok, tokens, options);
                                 arraylist.appendAssumeCapacity(v);
                             }
@@ -1567,11 +1848,11 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
                             if (ptrInfo.child != u8) return error.UnexpectedToken;
                             const source_slice = stringToken.slice(tokens.slice, tokens.i - 1);
                             switch (stringToken.escapes) {
-                                .None => return mem.dupe(allocator, u8, source_slice),
-                                .Some => |some_escapes| {
+                                .None => return allocator.dupe(u8, source_slice),
+                                .Some => {
                                     const output = try allocator.alloc(u8, stringToken.decodedLength());
                                     errdefer allocator.free(output);
-                                    try unescapeString(output, source_slice);
+                                    try unescapeValidString(output, source_slice);
                                     return output;
                                 },
                             }
@@ -1587,9 +1868,19 @@ fn parseInternal(comptime T: type, token: Token, tokens: *TokenStream, options: 
     unreachable;
 }
 
-pub fn parse(comptime T: type, tokens: *TokenStream, options: ParseOptions) !T {
+pub fn ParseError(comptime T: type) type {
+    return ParseInternalError(T) || error{UnexpectedEndOfJson} || TokenStream.Error;
+}
+
+pub fn parse(comptime T: type, tokens: *TokenStream, options: ParseOptions) ParseError(T)!T {
     const token = (try tokens.next()) orelse return error.UnexpectedEndOfJson;
-    return parseInternal(T, token, tokens, options);
+    const r = try parseInternal(T, token, tokens, options);
+    errdefer parseFree(T, r, options);
+    if (!options.allow_trailing_data) {
+        if ((try tokens.next()) != null) unreachable;
+        assert(tokens.i >= tokens.slice.len);
+    }
+    return r;
 }
 
 /// Releases resources created by `parse`.
@@ -1605,7 +1896,7 @@ pub fn parseFree(comptime T: type, value: T, options: ParseOptions) void {
         .Union => |unionInfo| {
             if (unionInfo.tag_type) |UnionTagType| {
                 inline for (unionInfo.fields) |u_field| {
-                    if (@enumToInt(@as(UnionTagType, value)) == u_field.enum_field.?.value) {
+                    if (value == @field(UnionTagType, u_field.name)) {
                         parseFree(u_field.field_type, @field(value, u_field.name), options);
                         break;
                     }
@@ -1616,7 +1907,9 @@ pub fn parseFree(comptime T: type, value: T, options: ParseOptions) void {
         },
         .Struct => |structInfo| {
             inline for (structInfo.fields) |field| {
-                parseFree(field.field_type, @field(value, field.name), options);
+                if (!field.is_comptime) {
+                    parseFree(field.field_type, @field(value, field.name), options);
+                }
             }
         },
         .Array => |arrayInfo| {
@@ -1629,7 +1922,7 @@ pub fn parseFree(comptime T: type, value: T, options: ParseOptions) void {
             switch (ptrInfo.size) {
                 .One => {
                     parseFree(ptrInfo.child, value.*, options);
-                    allocator.destroy(v);
+                    allocator.destroy(value);
                 },
                 .Slice => {
                     for (value) |v| {
@@ -1645,50 +1938,58 @@ pub fn parseFree(comptime T: type, value: T, options: ParseOptions) void {
 }
 
 test "parse" {
-    testing.expectEqual(false, try parse(bool, &TokenStream.init("false"), ParseOptions{}));
-    testing.expectEqual(true, try parse(bool, &TokenStream.init("true"), ParseOptions{}));
-    testing.expectEqual(@as(u1, 1), try parse(u1, &TokenStream.init("1"), ParseOptions{}));
-    testing.expectError(error.Overflow, parse(u1, &TokenStream.init("50"), ParseOptions{}));
-    testing.expectEqual(@as(u64, 42), try parse(u64, &TokenStream.init("42"), ParseOptions{}));
-    testing.expectEqual(@as(f64, 42), try parse(f64, &TokenStream.init("42.0"), ParseOptions{}));
-    testing.expectEqual(@as(?bool, null), try parse(?bool, &TokenStream.init("null"), ParseOptions{}));
-    testing.expectEqual(@as(?bool, true), try parse(?bool, &TokenStream.init("true"), ParseOptions{}));
+    try testing.expectEqual(false, try parse(bool, &TokenStream.init("false"), ParseOptions{}));
+    try testing.expectEqual(true, try parse(bool, &TokenStream.init("true"), ParseOptions{}));
+    try testing.expectEqual(@as(u1, 1), try parse(u1, &TokenStream.init("1"), ParseOptions{}));
+    try testing.expectError(error.Overflow, parse(u1, &TokenStream.init("50"), ParseOptions{}));
+    try testing.expectEqual(@as(u64, 42), try parse(u64, &TokenStream.init("42"), ParseOptions{}));
+    try testing.expectEqual(@as(f64, 42), try parse(f64, &TokenStream.init("42.0"), ParseOptions{}));
+    try testing.expectEqual(@as(?bool, null), try parse(?bool, &TokenStream.init("null"), ParseOptions{}));
+    try testing.expectEqual(@as(?bool, true), try parse(?bool, &TokenStream.init("true"), ParseOptions{}));
 
-    testing.expectEqual(@as([3]u8, "foo".*), try parse([3]u8, &TokenStream.init("\"foo\""), ParseOptions{}));
-    testing.expectEqual(@as([3]u8, "foo".*), try parse([3]u8, &TokenStream.init("[102, 111, 111]"), ParseOptions{}));
+    try testing.expectEqual(@as([3]u8, "foo".*), try parse([3]u8, &TokenStream.init("\"foo\""), ParseOptions{}));
+    try testing.expectEqual(@as([3]u8, "foo".*), try parse([3]u8, &TokenStream.init("[102, 111, 111]"), ParseOptions{}));
+    try testing.expectEqual(@as([0]u8, undefined), try parse([0]u8, &TokenStream.init("[]"), ParseOptions{}));
 }
 
 test "parse into enum" {
-    const T = extern enum {
+    const T = enum(u32) {
         Foo = 42,
         Bar,
         @"with\\escape",
     };
-    testing.expectEqual(@as(T, .Foo), try parse(T, &TokenStream.init("\"Foo\""), ParseOptions{}));
-    testing.expectEqual(@as(T, .Foo), try parse(T, &TokenStream.init("42"), ParseOptions{}));
-    testing.expectEqual(@as(T, .@"with\\escape"), try parse(T, &TokenStream.init("\"with\\\\escape\""), ParseOptions{}));
-    testing.expectError(error.InvalidEnumTag, parse(T, &TokenStream.init("5"), ParseOptions{}));
-    testing.expectError(error.InvalidEnumTag, parse(T, &TokenStream.init("\"Qux\""), ParseOptions{}));
+    try testing.expectEqual(@as(T, .Foo), try parse(T, &TokenStream.init("\"Foo\""), ParseOptions{}));
+    try testing.expectEqual(@as(T, .Foo), try parse(T, &TokenStream.init("42"), ParseOptions{}));
+    try testing.expectEqual(@as(T, .@"with\\escape"), try parse(T, &TokenStream.init("\"with\\\\escape\""), ParseOptions{}));
+    try testing.expectError(error.InvalidEnumTag, parse(T, &TokenStream.init("5"), ParseOptions{}));
+    try testing.expectError(error.InvalidEnumTag, parse(T, &TokenStream.init("\"Qux\""), ParseOptions{}));
+}
+
+test "parse with trailing data" {
+    try testing.expectEqual(false, try parse(bool, &TokenStream.init("falsed"), ParseOptions{ .allow_trailing_data = true }));
+    try testing.expectError(error.InvalidTopLevelTrailing, parse(bool, &TokenStream.init("falsed"), ParseOptions{ .allow_trailing_data = false }));
+    // trailing whitespace is okay
+    try testing.expectEqual(false, try parse(bool, &TokenStream.init("false \n"), ParseOptions{ .allow_trailing_data = false }));
 }
 
 test "parse into that allocates a slice" {
-    testing.expectError(error.AllocatorRequired, parse([]u8, &TokenStream.init("\"foo\""), ParseOptions{}));
+    try testing.expectError(error.AllocatorRequired, parse([]u8, &TokenStream.init("\"foo\""), ParseOptions{}));
 
     const options = ParseOptions{ .allocator = testing.allocator };
     {
         const r = try parse([]u8, &TokenStream.init("\"foo\""), options);
         defer parseFree([]u8, r, options);
-        testing.expectEqualSlices(u8, "foo", r);
+        try testing.expectEqualSlices(u8, "foo", r);
     }
     {
         const r = try parse([]u8, &TokenStream.init("[102, 111, 111]"), options);
         defer parseFree([]u8, r, options);
-        testing.expectEqualSlices(u8, "foo", r);
+        try testing.expectEqualSlices(u8, "foo", r);
     }
     {
         const r = try parse([]u8, &TokenStream.init("\"with\\\\escape\""), options);
         defer parseFree([]u8, r, options);
-        testing.expectEqualSlices(u8, "with\\escape", r);
+        try testing.expectEqualSlices(u8, "with\\escape", r);
     }
 }
 
@@ -1699,19 +2000,7 @@ test "parse into tagged union" {
             float: f64,
             string: []const u8,
         };
-        testing.expectEqual(T{ .float = 1.5 }, try parse(T, &TokenStream.init("1.5"), ParseOptions{}));
-    }
-
-    { // if union matches string member, fails with NoUnionMembersMatched rather than AllocatorRequired
-        // Note that this behaviour wasn't necessarily by design, but was
-        // what fell out of the implementation and may result in interesting
-        // API breakage if changed
-        const T = union(enum) {
-            int: i32,
-            float: f64,
-            string: []const u8,
-        };
-        testing.expectError(error.NoUnionMembersMatched, parse(T, &TokenStream.init("\"foo\""), ParseOptions{}));
+        try testing.expectEqual(T{ .float = 1.5 }, try parse(T, &TokenStream.init("1.5"), ParseOptions{}));
     }
 
     { // failing allocations should be bubbled up instantly without trying next member
@@ -1722,7 +2011,7 @@ test "parse into tagged union" {
             string: []const u8,
             array: [3]u8,
         };
-        testing.expectError(error.OutOfMemory, parse(T, &TokenStream.init("[1,2,3]"), options));
+        try testing.expectError(error.OutOfMemory, parse(T, &TokenStream.init("[1,2,3]"), options));
     }
 
     {
@@ -1731,7 +2020,34 @@ test "parse into tagged union" {
             x: u8,
             y: u8,
         };
-        testing.expectEqual(T{ .x = 42 }, try parse(T, &TokenStream.init("42"), ParseOptions{}));
+        try testing.expectEqual(T{ .x = 42 }, try parse(T, &TokenStream.init("42"), ParseOptions{}));
+    }
+
+    { // needs to back out when first union member doesn't match
+        const T = union(enum) {
+            A: struct { x: u32 },
+            B: struct { y: u32 },
+        };
+        try testing.expectEqual(T{ .B = .{ .y = 42 } }, try parse(T, &TokenStream.init("{\"y\":42}"), ParseOptions{}));
+    }
+}
+
+test "parse union bubbles up AllocatorRequired" {
+    { // string member first in union (and not matching)
+        const T = union(enum) {
+            string: []const u8,
+            int: i32,
+        };
+        try testing.expectError(error.AllocatorRequired, parse(T, &TokenStream.init("42"), ParseOptions{}));
+    }
+
+    { // string member not first in union (and matching)
+        const T = union(enum) {
+            int: i32,
+            float: f64,
+            string: []const u8,
+        };
+        try testing.expectError(error.AllocatorRequired, parse(T, &TokenStream.init("\"foo\""), ParseOptions{}));
     }
 }
 
@@ -1745,16 +2061,58 @@ test "parseFree descends into tagged union" {
     };
     // use a string with unicode escape so we know result can't be a reference to global constant
     const r = try parse(T, &TokenStream.init("\"with\\u0105unicode\""), options);
-    testing.expectEqual(@TagType(T).string, @as(@TagType(T), r));
-    testing.expectEqualSlices(u8, "withąunicode", r.string);
-    testing.expectEqual(@as(usize, 0), fail_alloc.deallocations);
+    try testing.expectEqual(std.meta.Tag(T).string, @as(std.meta.Tag(T), r));
+    try testing.expectEqualSlices(u8, "withąunicode", r.string);
+    try testing.expectEqual(@as(usize, 0), fail_alloc.deallocations);
     parseFree(T, r, options);
-    testing.expectEqual(@as(usize, 1), fail_alloc.deallocations);
+    try testing.expectEqual(@as(usize, 1), fail_alloc.deallocations);
+}
+
+test "parse with comptime field" {
+    {
+        const T = struct {
+            comptime a: i32 = 0,
+            b: bool,
+        };
+        try testing.expectEqual(T{ .a = 0, .b = true }, try parse(T, &TokenStream.init(
+            \\{
+            \\  "a": 0,
+            \\  "b": true
+            \\}
+        ), ParseOptions{}));
+    }
+
+    { // string comptime values currently require an allocator
+        const T = union(enum) {
+            foo: struct {
+                comptime kind: []const u8 = "boolean",
+                b: bool,
+            },
+            bar: struct {
+                comptime kind: []const u8 = "float",
+                b: f64,
+            },
+        };
+
+        const options = ParseOptions{
+            .allocator = std.testing.allocator,
+        };
+
+        const r = try parse(T, &TokenStream.init(
+            \\{
+            \\  "kind": "float",
+            \\  "b": 1.0
+            \\}
+        ), options);
+
+        // check that parseFree doesn't try to free comptime fields
+        parseFree(T, r, options);
+    }
 }
 
 test "parse into struct with no fields" {
     const T = struct {};
-    testing.expectEqual(T{}, try parse(T, &TokenStream.init("{}"), ParseOptions{}));
+    try testing.expectEqual(T{}, try parse(T, &TokenStream.init("{}"), ParseOptions{}));
 }
 
 test "parse into struct with misc fields" {
@@ -1810,24 +2168,134 @@ test "parse into struct with misc fields" {
         \\}
     ), options);
     defer parseFree(T, r, options);
-    testing.expectEqual(@as(i64, 420), r.int);
-    testing.expectEqual(@as(f64, 3.14), r.float);
-    testing.expectEqual(true, r.@"with\\escape");
-    testing.expectEqual(false, r.@"withąunicode😂");
-    testing.expectEqualSlices(u8, "zig", r.language);
-    testing.expectEqual(@as(?bool, null), r.optional);
-    testing.expectEqual(@as(i32, 42), r.default_field);
-    testing.expectEqual(@as(f64, 66.6), r.static_array[0]);
-    testing.expectEqual(@as(f64, 420.420), r.static_array[1]);
-    testing.expectEqual(@as(f64, 69.69), r.static_array[2]);
-    testing.expectEqual(@as(usize, 3), r.dynamic_array.len);
-    testing.expectEqual(@as(f64, 66.6), r.dynamic_array[0]);
-    testing.expectEqual(@as(f64, 420.420), r.dynamic_array[1]);
-    testing.expectEqual(@as(f64, 69.69), r.dynamic_array[2]);
-    testing.expectEqualSlices(u8, r.complex.nested, "zig");
-    testing.expectEqualSlices(u8, "zig", r.veryComplex[0].foo);
-    testing.expectEqualSlices(u8, "rocks", r.veryComplex[1].foo);
-    testing.expectEqual(T.Union{ .float = 100000 }, r.a_union);
+    try testing.expectEqual(@as(i64, 420), r.int);
+    try testing.expectEqual(@as(f64, 3.14), r.float);
+    try testing.expectEqual(true, r.@"with\\escape");
+    try testing.expectEqual(false, r.@"withąunicode😂");
+    try testing.expectEqualSlices(u8, "zig", r.language);
+    try testing.expectEqual(@as(?bool, null), r.optional);
+    try testing.expectEqual(@as(i32, 42), r.default_field);
+    try testing.expectEqual(@as(f64, 66.6), r.static_array[0]);
+    try testing.expectEqual(@as(f64, 420.420), r.static_array[1]);
+    try testing.expectEqual(@as(f64, 69.69), r.static_array[2]);
+    try testing.expectEqual(@as(usize, 3), r.dynamic_array.len);
+    try testing.expectEqual(@as(f64, 66.6), r.dynamic_array[0]);
+    try testing.expectEqual(@as(f64, 420.420), r.dynamic_array[1]);
+    try testing.expectEqual(@as(f64, 69.69), r.dynamic_array[2]);
+    try testing.expectEqualSlices(u8, r.complex.nested, "zig");
+    try testing.expectEqualSlices(u8, "zig", r.veryComplex[0].foo);
+    try testing.expectEqualSlices(u8, "rocks", r.veryComplex[1].foo);
+    try testing.expectEqual(T.Union{ .float = 100000 }, r.a_union);
+}
+
+test "parse into struct with duplicate field" {
+    // allow allocator to detect double frees by keeping bucket in use
+    const ballast = try testing.allocator.alloc(u64, 1);
+    defer testing.allocator.free(ballast);
+
+    const options_first = ParseOptions{ .allocator = testing.allocator, .duplicate_field_behavior = .UseFirst };
+
+    const options_last = ParseOptions{
+        .allocator = testing.allocator,
+        .duplicate_field_behavior = .UseLast,
+    };
+
+    const str = "{ \"a\": 1, \"a\": 0.25 }";
+
+    const T1 = struct { a: *u64 };
+    // both .UseFirst and .UseLast should fail because second "a" value isn't a u64
+    try testing.expectError(error.InvalidNumber, parse(T1, &TokenStream.init(str), options_first));
+    try testing.expectError(error.InvalidNumber, parse(T1, &TokenStream.init(str), options_last));
+
+    const T2 = struct { a: f64 };
+    try testing.expectEqual(T2{ .a = 1.0 }, try parse(T2, &TokenStream.init(str), options_first));
+    try testing.expectEqual(T2{ .a = 0.25 }, try parse(T2, &TokenStream.init(str), options_last));
+
+    const T3 = struct { comptime a: f64 = 1.0 };
+    // .UseFirst should succeed because second "a" value is unconditionally ignored (even though != 1.0)
+    const t3 = T3{ .a = 1.0 };
+    try testing.expectEqual(t3, try parse(T3, &TokenStream.init(str), options_first));
+    // .UseLast should fail because second "a" value is 0.25 which is not equal to default value of 1.0
+    try testing.expectError(error.UnexpectedValue, parse(T3, &TokenStream.init(str), options_last));
+}
+
+test "parse into struct ignoring unknown fields" {
+    const T = struct {
+        int: i64,
+        language: []const u8,
+    };
+
+    const ops = ParseOptions{
+        .allocator = testing.allocator,
+        .ignore_unknown_fields = true,
+    };
+
+    const r = try parse(T, &std.json.TokenStream.init(
+        \\{
+        \\  "int": 420,
+        \\  "float": 3.14,
+        \\  "with\\escape": true,
+        \\  "with\u0105unicode\ud83d\ude02": false,
+        \\  "optional": null,
+        \\  "static_array": [66.6, 420.420, 69.69],
+        \\  "dynamic_array": [66.6, 420.420, 69.69],
+        \\  "complex": {
+        \\    "nested": "zig"
+        \\  },
+        \\  "veryComplex": [
+        \\    {
+        \\      "foo": "zig"
+        \\    }, {
+        \\      "foo": "rocks"
+        \\    }
+        \\  ],
+        \\  "a_union": 100000,
+        \\  "language": "zig"
+        \\}
+    ), ops);
+    defer parseFree(T, r, ops);
+
+    try testing.expectEqual(@as(i64, 420), r.int);
+    try testing.expectEqualSlices(u8, "zig", r.language);
+}
+
+const ParseIntoRecursiveUnionDefinitionValue = union(enum) {
+    integer: i64,
+    array: []const ParseIntoRecursiveUnionDefinitionValue,
+};
+
+test "parse into recursive union definition" {
+    const T = struct {
+        values: ParseIntoRecursiveUnionDefinitionValue,
+    };
+    const ops = ParseOptions{ .allocator = testing.allocator };
+
+    const r = try parse(T, &std.json.TokenStream.init("{\"values\":[58]}"), ops);
+    defer parseFree(T, r, ops);
+
+    try testing.expectEqual(@as(i64, 58), r.values.array[0].integer);
+}
+
+const ParseIntoDoubleRecursiveUnionValueFirst = union(enum) {
+    integer: i64,
+    array: []const ParseIntoDoubleRecursiveUnionValueSecond,
+};
+
+const ParseIntoDoubleRecursiveUnionValueSecond = union(enum) {
+    boolean: bool,
+    array: []const ParseIntoDoubleRecursiveUnionValueFirst,
+};
+
+test "parse into double recursive union definition" {
+    const T = struct {
+        values: ParseIntoDoubleRecursiveUnionValueFirst,
+    };
+    const ops = ParseOptions{ .allocator = testing.allocator };
+
+    const r = try parse(T, &std.json.TokenStream.init("{\"values\":[[58]]}"), ops);
+    defer parseFree(T, r, ops);
+
+    try testing.expectEqual(@as(i64, 58), r.values.array[0].array[0].integer);
 }
 
 /// A non-stream JSON parser which constructs a tree of Value's.
@@ -1860,7 +2328,7 @@ pub const Parser = struct {
 
     pub fn reset(p: *Parser) void {
         p.state = .Simple;
-        p.stack.shrink(0);
+        p.stack.shrinkRetainingCapacity(0);
     }
 
     pub fn parse(p: *Parser, input: []const u8) !ValueTree {
@@ -1919,27 +2387,27 @@ pub const Parser = struct {
                         p.state = .ArrayValue;
                     },
                     .String => |s| {
-                        _ = try object.put(key, try p.parseString(allocator, s, input, i));
+                        try object.put(key, try p.parseString(allocator, s, input, i));
                         _ = p.stack.pop();
                         p.state = .ObjectKey;
                     },
                     .Number => |n| {
-                        _ = try object.put(key, try p.parseNumber(n, input, i));
+                        try object.put(key, try p.parseNumber(n, input, i));
                         _ = p.stack.pop();
                         p.state = .ObjectKey;
                     },
                     .True => {
-                        _ = try object.put(key, Value{ .Bool = true });
+                        try object.put(key, Value{ .Bool = true });
                         _ = p.stack.pop();
                         p.state = .ObjectKey;
                     },
                     .False => {
-                        _ = try object.put(key, Value{ .Bool = false });
+                        try object.put(key, Value{ .Bool = false });
                         _ = p.stack.pop();
                         p.state = .ObjectKey;
                     },
                     .Null => {
-                        _ = try object.put(key, Value.Null);
+                        try object.put(key, Value.Null);
                         _ = p.stack.pop();
                         p.state = .ObjectKey;
                     },
@@ -2020,13 +2488,13 @@ pub const Parser = struct {
     }
 
     fn pushToParent(p: *Parser, value: *const Value) !void {
-        switch (p.stack.span()[p.stack.items.len - 1]) {
+        switch (p.stack.items[p.stack.items.len - 1]) {
             // Object Parent -> [ ..., object, <key>, value ]
             Value.String => |key| {
                 _ = p.stack.pop();
 
                 var object = &p.stack.items[p.stack.items.len - 1].Object;
-                _ = try object.put(key, value.*);
+                try object.put(key, value.*);
                 p.state = .ObjectKey;
             },
             // Array Parent -> [ ..., <array>, value ]
@@ -2040,31 +2508,39 @@ pub const Parser = struct {
         }
     }
 
-    fn parseString(p: *Parser, allocator: *Allocator, s: std.meta.TagPayloadType(Token, Token.String), input: []const u8, i: usize) !Value {
+    fn parseString(p: *Parser, allocator: *Allocator, s: std.meta.TagPayload(Token, Token.String), input: []const u8, i: usize) !Value {
         const slice = s.slice(input, i);
         switch (s.escapes) {
-            .None => return Value{ .String = if (p.copy_strings) try mem.dupe(allocator, u8, slice) else slice },
-            .Some => |some_escapes| {
+            .None => return Value{ .String = if (p.copy_strings) try allocator.dupe(u8, slice) else slice },
+            .Some => {
                 const output = try allocator.alloc(u8, s.decodedLength());
                 errdefer allocator.free(output);
-                try unescapeString(output, slice);
+                try unescapeValidString(output, slice);
                 return Value{ .String = output };
             },
         }
     }
 
-    fn parseNumber(p: *Parser, n: std.meta.TagPayloadType(Token, Token.Number), input: []const u8, i: usize) !Value {
+    fn parseNumber(p: *Parser, n: std.meta.TagPayload(Token, Token.Number), input: []const u8, i: usize) !Value {
+        _ = p;
         return if (n.is_integer)
-            Value{ .Integer = try std.fmt.parseInt(i64, n.slice(input, i), 10) }
+            Value{
+                .Integer = std.fmt.parseInt(i64, n.slice(input, i), 10) catch |e| switch (e) {
+                    error.Overflow => return Value{ .NumberString = n.slice(input, i) },
+                    error.InvalidCharacter => |err| return err,
+                },
+            }
         else
             Value{ .Float = try std.fmt.parseFloat(f64, n.slice(input, i)) };
     }
 };
 
-// Unescape a JSON string
-// Only to be used on strings already validated by the parser
-// (note the unreachable statements and lack of bounds checking)
-fn unescapeString(output: []u8, input: []const u8) !void {
+pub const UnescapeValidStringError = error{InvalidUnicodeHexSymbol};
+
+/// Unescape a JSON string
+/// Only to be used on strings already validated by the parser
+/// (note the unreachable statements and lack of bounds checking)
+pub fn unescapeValidString(output: []u8, input: []const u8) UnescapeValidStringError!void {
     var inIndex: usize = 0;
     var outIndex: usize = 0;
 
@@ -2109,7 +2585,11 @@ fn unescapeString(output: []u8, input: []const u8) !void {
 
                 const secondCodeUnit = std.fmt.parseInt(u16, input[inIndex + 8 .. inIndex + 12], 16) catch unreachable;
 
-                if (std.unicode.utf16leToUtf8(output[outIndex..], &[2]u16{ firstCodeUnit, secondCodeUnit })) |byteCount| {
+                const utf16le_seq = [2]u16{
+                    mem.nativeToLittle(u16, firstCodeUnit),
+                    mem.nativeToLittle(u16, secondCodeUnit),
+                };
+                if (std.unicode.utf16leToUtf8(output[outIndex..], &utf16le_seq)) |byteCount| {
                     outIndex += byteCount;
                     inIndex += 12;
                 } else |_| {
@@ -2139,7 +2619,8 @@ test "json.parser.dynamic" {
         \\      "Animated" : false,
         \\      "IDs": [116, 943, 234, 38793],
         \\      "ArrayOfObject": [{"n": "m"}],
-        \\      "double": 1.3412
+        \\      "double": 1.3412,
+        \\      "LargeInt": 18446744073709551615
         \\    }
         \\}
     ;
@@ -2149,31 +2630,34 @@ test "json.parser.dynamic" {
 
     var root = tree.root;
 
-    var image = root.Object.get("Image").?.value;
+    var image = root.Object.get("Image").?;
 
-    const width = image.Object.get("Width").?.value;
-    testing.expect(width.Integer == 800);
+    const width = image.Object.get("Width").?;
+    try testing.expect(width.Integer == 800);
 
-    const height = image.Object.get("Height").?.value;
-    testing.expect(height.Integer == 600);
+    const height = image.Object.get("Height").?;
+    try testing.expect(height.Integer == 600);
 
-    const title = image.Object.get("Title").?.value;
-    testing.expect(mem.eql(u8, title.String, "View from 15th Floor"));
+    const title = image.Object.get("Title").?;
+    try testing.expect(mem.eql(u8, title.String, "View from 15th Floor"));
 
-    const animated = image.Object.get("Animated").?.value;
-    testing.expect(animated.Bool == false);
+    const animated = image.Object.get("Animated").?;
+    try testing.expect(animated.Bool == false);
 
-    const array_of_object = image.Object.get("ArrayOfObject").?.value;
-    testing.expect(array_of_object.Array.items.len == 1);
+    const array_of_object = image.Object.get("ArrayOfObject").?;
+    try testing.expect(array_of_object.Array.items.len == 1);
 
-    const obj0 = array_of_object.Array.items[0].Object.get("n").?.value;
-    testing.expect(mem.eql(u8, obj0.String, "m"));
+    const obj0 = array_of_object.Array.items[0].Object.get("n").?;
+    try testing.expect(mem.eql(u8, obj0.String, "m"));
 
-    const double = image.Object.get("double").?.value;
-    testing.expect(double.Float == 1.3412);
+    const double = image.Object.get("double").?;
+    try testing.expect(double.Float == 1.3412);
+
+    const large_int = image.Object.get("LargeInt").?;
+    try testing.expect(mem.eql(u8, large_int.NumberString, "18446744073709551615"));
 }
 
-test "import more json tests" {
+test {
     _ = @import("json/test.zig");
     _ = @import("json/write_stream.zig");
 }
@@ -2182,7 +2666,7 @@ test "write json then parse it" {
     var out_buffer: [1000]u8 = undefined;
 
     var fixed_buffer_stream = std.io.fixedBufferStream(&out_buffer);
-    const out_stream = fixed_buffer_stream.outStream();
+    const out_stream = fixed_buffer_stream.writer();
     var jw = writeStream(out_stream, 4);
 
     try jw.beginObject();
@@ -2217,15 +2701,15 @@ test "write json then parse it" {
     var tree = try parser.parse(fixed_buffer_stream.getWritten());
     defer tree.deinit();
 
-    testing.expect(tree.root.Object.get("f").?.value.Bool == false);
-    testing.expect(tree.root.Object.get("t").?.value.Bool == true);
-    testing.expect(tree.root.Object.get("int").?.value.Integer == 1234);
-    testing.expect(tree.root.Object.get("array").?.value.Array.items[0].Null == {});
-    testing.expect(tree.root.Object.get("array").?.value.Array.items[1].Float == 12.34);
-    testing.expect(mem.eql(u8, tree.root.Object.get("str").?.value.String, "hello"));
+    try testing.expect(tree.root.Object.get("f").?.Bool == false);
+    try testing.expect(tree.root.Object.get("t").?.Bool == true);
+    try testing.expect(tree.root.Object.get("int").?.Integer == 1234);
+    try testing.expect(tree.root.Object.get("array").?.Array.items[0].Null == {});
+    try testing.expect(tree.root.Object.get("array").?.Array.items[1].Float == 12.34);
+    try testing.expect(mem.eql(u8, tree.root.Object.get("str").?.String, "hello"));
 }
 
-fn test_parse(arena_allocator: *std.mem.Allocator, json_str: []const u8) !Value {
+fn testParse(arena_allocator: *std.mem.Allocator, json_str: []const u8) !Value {
     var p = Parser.init(arena_allocator, false);
     return (try p.parse(json_str)).root;
 }
@@ -2233,25 +2717,30 @@ fn test_parse(arena_allocator: *std.mem.Allocator, json_str: []const u8) !Value 
 test "parsing empty string gives appropriate error" {
     var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_allocator.deinit();
-    testing.expectError(error.UnexpectedEndOfJson, test_parse(&arena_allocator.allocator, ""));
+    try testing.expectError(error.UnexpectedEndOfJson, testParse(&arena_allocator.allocator, ""));
 }
 
 test "integer after float has proper type" {
     var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_allocator.deinit();
-    const json = try test_parse(&arena_allocator.allocator,
+    const json = try testParse(&arena_allocator.allocator,
         \\{
         \\  "float": 3.14,
         \\  "ints": [1, 2, 3]
         \\}
     );
-    std.testing.expect(json.Object.getValue("ints").?.Array.items[0] == .Integer);
+    try std.testing.expect(json.Object.get("ints").?.Array.items[0] == .Integer);
+}
+
+test "parse exponential into int" {
+    const T = struct { int: i64 };
+    const r = try parse(T, &TokenStream.init("{ \"int\": 4.2e2 }"), ParseOptions{});
+    try testing.expectEqual(@as(i64, 420), r.int);
+    try testing.expectError(error.InvalidNumber, parse(T, &TokenStream.init("{ \"int\": 0.042e2 }"), ParseOptions{}));
+    try testing.expectError(error.Overflow, parse(T, &TokenStream.init("{ \"int\": 18446744073709551616.0 }"), ParseOptions{}));
 }
 
 test "escaped characters" {
-    // https://github.com/ziglang/zig/issues/5127
-    if (std.Target.current.cpu.arch == .mips) return error.SkipZigTest;
-
     var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_allocator.deinit();
     const input =
@@ -2269,24 +2758,21 @@ test "escaped characters" {
         \\}
     ;
 
-    const obj = (try test_parse(&arena_allocator.allocator, input)).Object;
+    const obj = (try testParse(&arena_allocator.allocator, input)).Object;
 
-    testing.expectEqualSlices(u8, obj.get("backslash").?.value.String, "\\");
-    testing.expectEqualSlices(u8, obj.get("forwardslash").?.value.String, "/");
-    testing.expectEqualSlices(u8, obj.get("newline").?.value.String, "\n");
-    testing.expectEqualSlices(u8, obj.get("carriagereturn").?.value.String, "\r");
-    testing.expectEqualSlices(u8, obj.get("tab").?.value.String, "\t");
-    testing.expectEqualSlices(u8, obj.get("formfeed").?.value.String, "\x0C");
-    testing.expectEqualSlices(u8, obj.get("backspace").?.value.String, "\x08");
-    testing.expectEqualSlices(u8, obj.get("doublequote").?.value.String, "\"");
-    testing.expectEqualSlices(u8, obj.get("unicode").?.value.String, "ą");
-    testing.expectEqualSlices(u8, obj.get("surrogatepair").?.value.String, "😂");
+    try testing.expectEqualSlices(u8, obj.get("backslash").?.String, "\\");
+    try testing.expectEqualSlices(u8, obj.get("forwardslash").?.String, "/");
+    try testing.expectEqualSlices(u8, obj.get("newline").?.String, "\n");
+    try testing.expectEqualSlices(u8, obj.get("carriagereturn").?.String, "\r");
+    try testing.expectEqualSlices(u8, obj.get("tab").?.String, "\t");
+    try testing.expectEqualSlices(u8, obj.get("formfeed").?.String, "\x0C");
+    try testing.expectEqualSlices(u8, obj.get("backspace").?.String, "\x08");
+    try testing.expectEqualSlices(u8, obj.get("doublequote").?.String, "\"");
+    try testing.expectEqualSlices(u8, obj.get("unicode").?.String, "ą");
+    try testing.expectEqualSlices(u8, obj.get("surrogatepair").?.String, "😂");
 }
 
 test "string copy option" {
-    // https://github.com/ziglang/zig/issues/5127
-    if (std.Target.current.cpu.arch == .mips) return error.SkipZigTest;
-
     const input =
         \\{
         \\  "noescape": "aą😂",
@@ -2306,20 +2792,20 @@ test "string copy option" {
     const obj_copy = tree_copy.root.Object;
 
     for ([_][]const u8{ "noescape", "simple", "unicode", "surrogatepair" }) |field_name| {
-        testing.expectEqualSlices(u8, obj_nocopy.getValue(field_name).?.String, obj_copy.getValue(field_name).?.String);
+        try testing.expectEqualSlices(u8, obj_nocopy.get(field_name).?.String, obj_copy.get(field_name).?.String);
     }
 
-    const nocopy_addr = &obj_nocopy.getValue("noescape").?.String[0];
-    const copy_addr = &obj_copy.getValue("noescape").?.String[0];
+    const nocopy_addr = &obj_nocopy.get("noescape").?.String[0];
+    const copy_addr = &obj_copy.get("noescape").?.String[0];
 
     var found_nocopy = false;
     for (input) |_, index| {
-        testing.expect(copy_addr != &input[index]);
+        try testing.expect(copy_addr != &input[index]);
         if (nocopy_addr == &input[index]) {
             found_nocopy = true;
         }
     }
-    testing.expect(found_nocopy);
+    try testing.expect(found_nocopy);
 }
 
 pub const StringifyOptions = struct {
@@ -2338,7 +2824,7 @@ pub const StringifyOptions = struct {
 
         pub fn outputIndent(
             whitespace: @This(),
-            out_stream: var,
+            out_stream: anytype,
         ) @TypeOf(out_stream).Error!void {
             var char: u8 = undefined;
             var n_chars: usize = undefined;
@@ -2380,7 +2866,7 @@ pub const StringifyOptions = struct {
 
 fn outputUnicodeEscape(
     codepoint: u21,
-    out_stream: var,
+    out_stream: anytype,
 ) !void {
     if (codepoint <= 0xFFFF) {
         // If the character is in the Basic Multilingual Plane (U+0000 through U+FFFF),
@@ -2402,9 +2888,9 @@ fn outputUnicodeEscape(
 }
 
 pub fn stringify(
-    value: var,
+    value: anytype,
     options: StringifyOptions,
-    out_stream: var,
+    out_stream: anytype,
 ) @TypeOf(out_stream).Error!void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
@@ -2442,7 +2928,7 @@ pub fn stringify(
             const info = @typeInfo(T).Union;
             if (info.tag_type) |UnionTagType| {
                 inline for (info.fields) |u_field| {
-                    if (@enumToInt(@as(UnionTagType, value)) == u_field.enum_field.?.value) {
+                    if (value == @field(UnionTagType, u_field.name)) {
                         return try stringify(@field(value, u_field.name), options, out_stream);
                     }
                 }
@@ -2461,7 +2947,7 @@ pub fn stringify(
             if (child_options.whitespace) |*child_whitespace| {
                 child_whitespace.indent_level += 1;
             }
-            inline for (S.fields) |Field, field_i| {
+            inline for (S.fields) |Field| {
                 // don't include void fields
                 if (Field.field_type == void) continue;
 
@@ -2492,6 +2978,7 @@ pub fn stringify(
             try out_stream.writeByte('}');
             return;
         },
+        .ErrorSet => return stringify(@as([]const u8, @errorName(value)), options, out_stream),
         .Pointer => |ptr_info| switch (ptr_info.size) {
             .One => switch (@typeInfo(ptr_info.child)) {
                 .Array => {
@@ -2574,15 +3061,19 @@ pub fn stringify(
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
         .Array => return stringify(&value, options, out_stream),
+        .Vector => |info| {
+            const array: [info.len]info.child = value;
+            return stringify(&array, options, out_stream);
+        },
         else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
     }
     unreachable;
 }
 
-fn teststringify(expected: []const u8, value: var, options: StringifyOptions) !void {
-    const ValidationOutStream = struct {
+fn teststringify(expected: []const u8, value: anytype, options: StringifyOptions) !void {
+    const ValidationWriter = struct {
         const Self = @This();
-        pub const OutStream = std.io.OutStream(*Self, Error, write);
+        pub const Writer = std.io.Writer(*Self, Error, write);
         pub const Error = error{
             TooMuchData,
             DifferentData,
@@ -2594,7 +3085,7 @@ fn teststringify(expected: []const u8, value: var, options: StringifyOptions) !v
             return .{ .expected_remaining = exp };
         }
 
-        pub fn outStream(self: *Self) OutStream {
+        pub fn writer(self: *Self) Writer {
             return .{ .context = self };
         }
 
@@ -2602,9 +3093,9 @@ fn teststringify(expected: []const u8, value: var, options: StringifyOptions) !v
             if (self.expected_remaining.len < bytes.len) {
                 std.debug.warn(
                     \\====== expected this output: =========
-                    \\{}
+                    \\{s}
                     \\======== instead found this: =========
-                    \\{}
+                    \\{s}
                     \\======================================
                 , .{
                     self.expected_remaining,
@@ -2615,9 +3106,9 @@ fn teststringify(expected: []const u8, value: var, options: StringifyOptions) !v
             if (!mem.eql(u8, self.expected_remaining[0..bytes.len], bytes)) {
                 std.debug.warn(
                     \\====== expected this output: =========
-                    \\{}
+                    \\{s}
                     \\======== instead found this: =========
-                    \\{}
+                    \\{s}
                     \\======================================
                 , .{
                     self.expected_remaining[0..bytes.len],
@@ -2630,8 +3121,8 @@ fn teststringify(expected: []const u8, value: var, options: StringifyOptions) !v
         }
     };
 
-    var vos = ValidationOutStream.init(expected);
-    try stringify(value, options, vos.outStream());
+    var vos = ValidationWriter.init(expected);
+    try stringify(value, options, vos.writer());
     if (vos.expected_remaining.len > 0) return error.NotEnoughData;
 }
 
@@ -2646,6 +3137,7 @@ test "stringify basic types" {
     try teststringify("42", @as(u128, 42), StringifyOptions{});
     try teststringify("4.2e+01", @as(f32, 42), StringifyOptions{});
     try teststringify("4.2e+01", @as(f64, 42), StringifyOptions{});
+    try teststringify("\"ItBroke\"", @as(anyerror, error.ItBroke), StringifyOptions{});
 }
 
 test "stringify string" {
@@ -2699,9 +3191,9 @@ test "stringify struct with indentation" {
         \\}
     ,
         struct {
-                foo: u32,
-                bar: [3]u32,
-            }{
+            foo: u32,
+            bar: [3]u32,
+        }{
             .foo = 42,
             .bar = .{ 1, 2, 3 },
         },
@@ -2712,9 +3204,9 @@ test "stringify struct with indentation" {
     try teststringify(
         "{\n\t\"foo\":42,\n\t\"bar\":[\n\t\t1,\n\t\t2,\n\t\t3\n\t]\n}",
         struct {
-                foo: u32,
-                bar: [3]u32,
-            }{
+            foo: u32,
+            bar: [3]u32,
+        }{
             .foo = 42,
             .bar = .{ 1, 2, 3 },
         },
@@ -2752,11 +3244,16 @@ test "stringify struct with custom stringifier" {
         pub fn jsonStringify(
             value: Self,
             options: StringifyOptions,
-            out_stream: var,
+            out_stream: anytype,
         ) !void {
+            _ = value;
             try out_stream.writeAll("[\"something special\",");
             try stringify(42, options, out_stream);
             try out_stream.writeByte(']');
         }
     }{ .foo = 42 }, StringifyOptions{});
+}
+
+test "stringify vector" {
+    try teststringify("[1,1]", @splat(2, @as(u32, 1)), StringifyOptions{});
 }

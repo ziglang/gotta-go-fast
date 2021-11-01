@@ -6,6 +6,7 @@
 //   still moderately fast just slow relative to the slicing approach.
 
 const std = @import("../std.zig");
+const builtin = @import("builtin");
 const debug = std.debug;
 const testing = std.testing;
 
@@ -23,7 +24,7 @@ pub const Crc32 = Crc32WithPoly(.IEEE);
 pub fn Crc32WithPoly(comptime poly: Polynomial) type {
     return struct {
         const Self = @This();
-        const lookup_tables = comptime block: {
+        const lookup_tables = block: {
             @setEvalBranchQuota(20000);
             var tables: [8][256]u32 = undefined;
 
@@ -66,10 +67,7 @@ pub fn Crc32WithPoly(comptime poly: Polynomial) type {
                 const p = input[i .. i + 8];
 
                 // Unrolling this way gives ~50Mb/s increase
-                self.crc ^= (@as(u32, p[0]) << 0);
-                self.crc ^= (@as(u32, p[1]) << 8);
-                self.crc ^= (@as(u32, p[2]) << 16);
-                self.crc ^= (@as(u32, p[3]) << 24);
+                self.crc ^= std.mem.readIntLittle(u32, p[0..4]);
 
                 self.crc =
                     lookup_tables[0][p[7]] ^
@@ -100,27 +98,33 @@ pub fn Crc32WithPoly(comptime poly: Polynomial) type {
     };
 }
 
+const please_windows_dont_oom = builtin.os.tag == .windows;
+
 test "crc32 ieee" {
+    if (please_windows_dont_oom) return error.SkipZigTest;
+
     const Crc32Ieee = Crc32WithPoly(.IEEE);
 
-    testing.expect(Crc32Ieee.hash("") == 0x00000000);
-    testing.expect(Crc32Ieee.hash("a") == 0xe8b7be43);
-    testing.expect(Crc32Ieee.hash("abc") == 0x352441c2);
+    try testing.expect(Crc32Ieee.hash("") == 0x00000000);
+    try testing.expect(Crc32Ieee.hash("a") == 0xe8b7be43);
+    try testing.expect(Crc32Ieee.hash("abc") == 0x352441c2);
 }
 
 test "crc32 castagnoli" {
+    if (please_windows_dont_oom) return error.SkipZigTest;
+
     const Crc32Castagnoli = Crc32WithPoly(.Castagnoli);
 
-    testing.expect(Crc32Castagnoli.hash("") == 0x00000000);
-    testing.expect(Crc32Castagnoli.hash("a") == 0xc1d04330);
-    testing.expect(Crc32Castagnoli.hash("abc") == 0x364b3fb7);
+    try testing.expect(Crc32Castagnoli.hash("") == 0x00000000);
+    try testing.expect(Crc32Castagnoli.hash("a") == 0xc1d04330);
+    try testing.expect(Crc32Castagnoli.hash("abc") == 0x364b3fb7);
 }
 
 // half-byte lookup table implementation.
 pub fn Crc32SmallWithPoly(comptime poly: Polynomial) type {
     return struct {
         const Self = @This();
-        const lookup_table = comptime block: {
+        const lookup_table = block: {
             var table: [16]u32 = undefined;
 
             for (table) |*e, i| {
@@ -165,17 +169,21 @@ pub fn Crc32SmallWithPoly(comptime poly: Polynomial) type {
 }
 
 test "small crc32 ieee" {
+    if (please_windows_dont_oom) return error.SkipZigTest;
+
     const Crc32Ieee = Crc32SmallWithPoly(.IEEE);
 
-    testing.expect(Crc32Ieee.hash("") == 0x00000000);
-    testing.expect(Crc32Ieee.hash("a") == 0xe8b7be43);
-    testing.expect(Crc32Ieee.hash("abc") == 0x352441c2);
+    try testing.expect(Crc32Ieee.hash("") == 0x00000000);
+    try testing.expect(Crc32Ieee.hash("a") == 0xe8b7be43);
+    try testing.expect(Crc32Ieee.hash("abc") == 0x352441c2);
 }
 
 test "small crc32 castagnoli" {
+    if (please_windows_dont_oom) return error.SkipZigTest;
+
     const Crc32Castagnoli = Crc32SmallWithPoly(.Castagnoli);
 
-    testing.expect(Crc32Castagnoli.hash("") == 0x00000000);
-    testing.expect(Crc32Castagnoli.hash("a") == 0xc1d04330);
-    testing.expect(Crc32Castagnoli.hash("abc") == 0x364b3fb7);
+    try testing.expect(Crc32Castagnoli.hash("") == 0x00000000);
+    try testing.expect(Crc32Castagnoli.hash("a") == 0xc1d04330);
+    try testing.expect(Crc32Castagnoli.hash("abc") == 0x364b3fb7);
 }

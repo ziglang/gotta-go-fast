@@ -54,29 +54,30 @@ pub fn __aeabi_dsub(a: f64, b: f64) callconv(.AAPCS) f64 {
 }
 
 // TODO: restore inline keyword, see: https://github.com/ziglang/zig/issues/2154
-fn normalize(comptime T: type, significand: *std.meta.Int(false, T.bit_count)) i32 {
-    const Z = std.meta.Int(false, T.bit_count);
-    const S = std.meta.Int(false, T.bit_count - @clz(Z, @as(Z, T.bit_count) - 1));
+fn normalize(comptime T: type, significand: *std.meta.Int(.unsigned, @typeInfo(T).Float.bits)) i32 {
+    const bits = @typeInfo(T).Float.bits;
+    const Z = std.meta.Int(.unsigned, bits);
+    const S = std.meta.Int(.unsigned, bits - @clz(Z, @as(Z, bits) - 1));
     const significandBits = std.math.floatMantissaBits(T);
     const implicitBit = @as(Z, 1) << significandBits;
 
-    const shift = @clz(std.meta.Int(false, T.bit_count), significand.*) - @clz(Z, implicitBit);
+    const shift = @clz(std.meta.Int(.unsigned, bits), significand.*) - @clz(Z, implicitBit);
     significand.* <<= @intCast(S, shift);
     return 1 - shift;
 }
 
 // TODO: restore inline keyword, see: https://github.com/ziglang/zig/issues/2154
 fn addXf3(comptime T: type, a: T, b: T) T {
-    const Z = std.meta.Int(false, T.bit_count);
-    const S = std.meta.Int(false, T.bit_count - @clz(Z, @as(Z, T.bit_count) - 1));
+    const bits = @typeInfo(T).Float.bits;
+    const Z = std.meta.Int(.unsigned, bits);
+    const S = std.meta.Int(.unsigned, bits - @clz(Z, @as(Z, bits) - 1));
 
-    const typeWidth = T.bit_count;
+    const typeWidth = bits;
     const significandBits = std.math.floatMantissaBits(T);
     const exponentBits = std.math.floatExponentBits(T);
 
     const signBit = (@as(Z, 1) << (significandBits + exponentBits));
     const maxExponent = ((1 << exponentBits) - 1);
-    const exponentBias = (maxExponent >> 1);
 
     const implicitBit = (@as(Z, 1) << significandBits);
     const quietBit = implicitBit >> 1;
@@ -90,10 +91,6 @@ fn addXf3(comptime T: type, a: T, b: T) T {
     var bRep = @bitCast(Z, b);
     const aAbs = aRep & absMask;
     const bAbs = bRep & absMask;
-
-    const negative = (aRep & signBit) != 0;
-    const exponent = @intCast(i32, aAbs >> significandBits) - exponentBias;
-    const significand = (aAbs & significandMask) | implicitBit;
 
     const infRep = @bitCast(Z, std.math.inf(T));
 
@@ -182,7 +179,7 @@ fn addXf3(comptime T: type, a: T, b: T) T {
         // If partial cancellation occured, we need to left-shift the result
         // and adjust the exponent:
         if (aSignificand < implicitBit << 3) {
-            const shift = @intCast(i32, @clz(Z, aSignificand)) - @intCast(i32, @clz(std.meta.Int(false, T.bit_count), implicitBit << 3));
+            const shift = @intCast(i32, @clz(Z, aSignificand)) - @intCast(i32, @clz(std.meta.Int(.unsigned, bits), implicitBit << 3));
             aSignificand <<= @intCast(S, shift);
             aExponent -= shift;
         }
@@ -228,6 +225,6 @@ fn addXf3(comptime T: type, a: T, b: T) T {
     return @bitCast(T, result);
 }
 
-test "import addXf3" {
+test {
     _ = @import("addXf3_test.zig");
 }

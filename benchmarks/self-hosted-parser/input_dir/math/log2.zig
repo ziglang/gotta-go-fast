@@ -16,7 +16,7 @@ const maxInt = std.math.maxInt;
 ///  - log2(0)     = -inf
 ///  - log2(x)     = nan if x < 0
 ///  - log2(nan)   = nan
-pub fn log2(x: var) @TypeOf(x) {
+pub fn log2(x: anytype) @TypeOf(x) {
     const T = @TypeOf(x);
     switch (@typeInfo(T)) {
         .ComptimeFloat => {
@@ -38,8 +38,9 @@ pub fn log2(x: var) @TypeOf(x) {
             }) : (result += 1) {}
             return result;
         },
-        .Int => {
-            return math.log2_int(T, x);
+        .Int => |IntType| switch (IntType.signedness) {
+            .signed => return @compileError("log2 not implemented for signed integers"),
+            .unsigned => return math.log2_int(T, x),
         },
         else => @compileError("log2 not implemented for " ++ @typeName(T)),
     }
@@ -173,40 +174,40 @@ pub fn log2_64(x_: f64) f64 {
 }
 
 test "math.log2" {
-    expect(log2(@as(f32, 0.2)) == log2_32(0.2));
-    expect(log2(@as(f64, 0.2)) == log2_64(0.2));
+    try expect(log2(@as(f32, 0.2)) == log2_32(0.2));
+    try expect(log2(@as(f64, 0.2)) == log2_64(0.2));
 }
 
 test "math.log2_32" {
     const epsilon = 0.000001;
 
-    expect(math.approxEq(f32, log2_32(0.2), -2.321928, epsilon));
-    expect(math.approxEq(f32, log2_32(0.8923), -0.164399, epsilon));
-    expect(math.approxEq(f32, log2_32(1.5), 0.584962, epsilon));
-    expect(math.approxEq(f32, log2_32(37.45), 5.226894, epsilon));
-    expect(math.approxEq(f32, log2_32(123123.234375), 16.909744, epsilon));
+    try expect(math.approxEqAbs(f32, log2_32(0.2), -2.321928, epsilon));
+    try expect(math.approxEqAbs(f32, log2_32(0.8923), -0.164399, epsilon));
+    try expect(math.approxEqAbs(f32, log2_32(1.5), 0.584962, epsilon));
+    try expect(math.approxEqAbs(f32, log2_32(37.45), 5.226894, epsilon));
+    try expect(math.approxEqAbs(f32, log2_32(123123.234375), 16.909744, epsilon));
 }
 
 test "math.log2_64" {
     const epsilon = 0.000001;
 
-    expect(math.approxEq(f64, log2_64(0.2), -2.321928, epsilon));
-    expect(math.approxEq(f64, log2_64(0.8923), -0.164399, epsilon));
-    expect(math.approxEq(f64, log2_64(1.5), 0.584962, epsilon));
-    expect(math.approxEq(f64, log2_64(37.45), 5.226894, epsilon));
-    expect(math.approxEq(f64, log2_64(123123.234375), 16.909744, epsilon));
+    try expect(math.approxEqAbs(f64, log2_64(0.2), -2.321928, epsilon));
+    try expect(math.approxEqAbs(f64, log2_64(0.8923), -0.164399, epsilon));
+    try expect(math.approxEqAbs(f64, log2_64(1.5), 0.584962, epsilon));
+    try expect(math.approxEqAbs(f64, log2_64(37.45), 5.226894, epsilon));
+    try expect(math.approxEqAbs(f64, log2_64(123123.234375), 16.909744, epsilon));
 }
 
 test "math.log2_32.special" {
-    expect(math.isPositiveInf(log2_32(math.inf(f32))));
-    expect(math.isNegativeInf(log2_32(0.0)));
-    expect(math.isNan(log2_32(-1.0)));
-    expect(math.isNan(log2_32(math.nan(f32))));
+    try expect(math.isPositiveInf(log2_32(math.inf(f32))));
+    try expect(math.isNegativeInf(log2_32(0.0)));
+    try expect(math.isNan(log2_32(-1.0)));
+    try expect(math.isNan(log2_32(math.nan(f32))));
 }
 
 test "math.log2_64.special" {
-    expect(math.isPositiveInf(log2_64(math.inf(f64))));
-    expect(math.isNegativeInf(log2_64(0.0)));
-    expect(math.isNan(log2_64(-1.0)));
-    expect(math.isNan(log2_64(math.nan(f64))));
+    try expect(math.isPositiveInf(log2_64(math.inf(f64))));
+    try expect(math.isNegativeInf(log2_64(0.0)));
+    try expect(math.isNan(log2_64(-1.0)));
+    try expect(math.isNan(log2_64(math.nan(f64))));
 }

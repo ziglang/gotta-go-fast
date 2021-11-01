@@ -11,7 +11,7 @@ pub fn Queue(comptime T: type) type {
     return struct {
         head: ?*Node,
         tail: ?*Node,
-        mutex: std.Mutex,
+        mutex: std.Thread.Mutex,
 
         pub const Self = @This();
         pub const Node = std.TailQueue(T).Node;
@@ -22,7 +22,7 @@ pub fn Queue(comptime T: type) type {
             return Self{
                 .head = null,
                 .tail = null,
-                .mutex = std.Mutex.init(),
+                .mutex = std.Thread.Mutex{},
             };
         }
 
@@ -117,16 +117,16 @@ pub fn Queue(comptime T: type) type {
 
         /// Dumps the contents of the queue to `stderr`.
         pub fn dump(self: *Self) void {
-            self.dumpToStream(std.io.getStdErr().outStream()) catch return;
+            self.dumpToStream(std.io.getStdErr().writer()) catch return;
         }
 
         /// Dumps the contents of the queue to `stream`.
         /// Up to 4 elements from the head are dumped and the tail of the queue is
         /// dumped as well.
-        pub fn dumpToStream(self: *Self, stream: var) !void {
+        pub fn dumpToStream(self: *Self, stream: anytype) !void {
             const S = struct {
                 fn dumpRecursive(
-                    s: var,
+                    s: anytype,
                     optional_node: ?*Node,
                     indent: usize,
                     comptime depth: comptime_int,
@@ -190,41 +190,41 @@ test "std.atomic.Queue" {
     };
 
     if (builtin.single_threaded) {
-        expect(context.queue.isEmpty());
+        try expect(context.queue.isEmpty());
         {
             var i: usize = 0;
             while (i < put_thread_count) : (i += 1) {
-                expect(startPuts(&context) == 0);
+                try expect(startPuts(&context) == 0);
             }
         }
-        expect(!context.queue.isEmpty());
+        try expect(!context.queue.isEmpty());
         context.puts_done = true;
         {
             var i: usize = 0;
             while (i < put_thread_count) : (i += 1) {
-                expect(startGets(&context) == 0);
+                try expect(startGets(&context) == 0);
             }
         }
-        expect(context.queue.isEmpty());
+        try expect(context.queue.isEmpty());
     } else {
-        expect(context.queue.isEmpty());
+        try expect(context.queue.isEmpty());
 
-        var putters: [put_thread_count]*std.Thread = undefined;
+        var putters: [put_thread_count]std.Thread = undefined;
         for (putters) |*t| {
-            t.* = try std.Thread.spawn(&context, startPuts);
+            t.* = try std.Thread.spawn(.{}, startPuts, .{&context});
         }
-        var getters: [put_thread_count]*std.Thread = undefined;
+        var getters: [put_thread_count]std.Thread = undefined;
         for (getters) |*t| {
-            t.* = try std.Thread.spawn(&context, startGets);
+            t.* = try std.Thread.spawn(.{}, startGets, .{&context});
         }
 
         for (putters) |t|
-            t.wait();
+            t.join();
         @atomicStore(bool, &context.puts_done, true, .SeqCst);
         for (getters) |t|
-            t.wait();
+            t.join();
 
-        expect(context.queue.isEmpty());
+        try expect(context.queue.isEmpty());
     }
 
     if (context.put_sum != context.get_sum) {
@@ -242,10 +242,11 @@ test "std.atomic.Queue" {
 
 fn startPuts(ctx: *Context) u8 {
     var put_count: usize = puts_per_thread;
-    var r = std.rand.DefaultPrng.init(0xdeadbeef);
+    var prng = std.rand.DefaultPrng.init(0xdeadbeef);
+    const random = prng.random();
     while (put_count != 0) : (put_count -= 1) {
         std.time.sleep(1); // let the os scheduler be our fuzz
-        const x = @bitCast(i32, r.random.int(u32));
+        const x = @bitCast(i32, random.int(u32));
         const node = ctx.allocator.create(Queue(i32).Node) catch unreachable;
         node.* = .{
             .prev = undefined,
@@ -274,7 +275,7 @@ fn startGets(ctx: *Context) u8 {
 
 test "std.atomic.Queue single-threaded" {
     var queue = Queue(i32).init();
-    expect(queue.isEmpty());
+    try expect(queue.isEmpty());
 
     var node_0 = Queue(i32).Node{
         .data = 0,
@@ -282,7 +283,7 @@ test "std.atomic.Queue single-threaded" {
         .prev = undefined,
     };
     queue.put(&node_0);
-    expect(!queue.isEmpty());
+    try expect(!queue.isEmpty());
 
     var node_1 = Queue(i32).Node{
         .data = 1,
@@ -290,10 +291,10 @@ test "std.atomic.Queue single-threaded" {
         .prev = undefined,
     };
     queue.put(&node_1);
-    expect(!queue.isEmpty());
+    try expect(!queue.isEmpty());
 
-    expect(queue.get().?.data == 0);
-    expect(!queue.isEmpty());
+    try expect(queue.get().?.data == 0);
+    try expect(!queue.isEmpty());
 
     var node_2 = Queue(i32).Node{
         .data = 2,
@@ -301,7 +302,7 @@ test "std.atomic.Queue single-threaded" {
         .prev = undefined,
     };
     queue.put(&node_2);
-    expect(!queue.isEmpty());
+    try expect(!queue.isEmpty());
 
     var node_3 = Queue(i32).Node{
         .data = 3,
@@ -309,13 +310,13 @@ test "std.atomic.Queue single-threaded" {
         .prev = undefined,
     };
     queue.put(&node_3);
-    expect(!queue.isEmpty());
+    try expect(!queue.isEmpty());
 
-    expect(queue.get().?.data == 1);
-    expect(!queue.isEmpty());
+    try expect(queue.get().?.data == 1);
+    try expect(!queue.isEmpty());
 
-    expect(queue.get().?.data == 2);
-    expect(!queue.isEmpty());
+    try expect(queue.get().?.data == 2);
+    try expect(!queue.isEmpty());
 
     var node_4 = Queue(i32).Node{
         .data = 4,
@@ -323,17 +324,17 @@ test "std.atomic.Queue single-threaded" {
         .prev = undefined,
     };
     queue.put(&node_4);
-    expect(!queue.isEmpty());
+    try expect(!queue.isEmpty());
 
-    expect(queue.get().?.data == 3);
+    try expect(queue.get().?.data == 3);
     node_3.next = null;
-    expect(!queue.isEmpty());
+    try expect(!queue.isEmpty());
 
-    expect(queue.get().?.data == 4);
-    expect(queue.isEmpty());
+    try expect(queue.get().?.data == 4);
+    try expect(queue.isEmpty());
 
-    expect(queue.get() == null);
-    expect(queue.isEmpty());
+    try expect(queue.get() == null);
+    try expect(queue.isEmpty());
 }
 
 test "std.atomic.Queue dump" {
@@ -346,8 +347,8 @@ test "std.atomic.Queue dump" {
 
     // Test empty stream
     fbs.reset();
-    try queue.dumpToStream(fbs.outStream());
-    expect(mem.eql(u8, buffer[0..fbs.pos],
+    try queue.dumpToStream(fbs.writer());
+    try expect(mem.eql(u8, buffer[0..fbs.pos],
         \\head: (null)
         \\tail: (null)
         \\
@@ -362,7 +363,7 @@ test "std.atomic.Queue dump" {
     queue.put(&node_0);
 
     fbs.reset();
-    try queue.dumpToStream(fbs.outStream());
+    try queue.dumpToStream(fbs.writer());
 
     var expected = try std.fmt.bufPrint(expected_buffer[0..],
         \\head: 0x{x}=1
@@ -371,7 +372,7 @@ test "std.atomic.Queue dump" {
         \\ (null)
         \\
     , .{ @ptrToInt(queue.head), @ptrToInt(queue.tail) });
-    expect(mem.eql(u8, buffer[0..fbs.pos], expected));
+    try expect(mem.eql(u8, buffer[0..fbs.pos], expected));
 
     // Test a stream with two elements
     var node_1 = Queue(i32).Node{
@@ -382,7 +383,7 @@ test "std.atomic.Queue dump" {
     queue.put(&node_1);
 
     fbs.reset();
-    try queue.dumpToStream(fbs.outStream());
+    try queue.dumpToStream(fbs.writer());
 
     expected = try std.fmt.bufPrint(expected_buffer[0..],
         \\head: 0x{x}=1
@@ -392,5 +393,5 @@ test "std.atomic.Queue dump" {
         \\ (null)
         \\
     , .{ @ptrToInt(queue.head), @ptrToInt(queue.head.?.next), @ptrToInt(queue.tail) });
-    expect(mem.eql(u8, buffer[0..fbs.pos], expected));
+    try expect(mem.eql(u8, buffer[0..fbs.pos], expected));
 }

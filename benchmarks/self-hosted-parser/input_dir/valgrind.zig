@@ -7,15 +7,15 @@ pub fn doClientRequest(default: usize, request: usize, a1: usize, a2: usize, a3:
         return default;
     }
 
-    switch (builtin.arch) {
+    switch (builtin.target.cpu.arch) {
         .i386 => {
             return asm volatile (
                 \\ roll $3,  %%edi ; roll $13, %%edi
                 \\ roll $29, %%edi ; roll $19, %%edi
                 \\ xchgl %%ebx,%%ebx
-                : [_] "={edx}" (-> usize)
+                : [_] "={edx}" (-> usize),
                 : [_] "{eax}" (&[_]usize{ request, a1, a2, a3, a4, a5 }),
-                  [_] "0" (default)
+                  [_] "0" (default),
                 : "cc", "memory"
             );
         },
@@ -24,9 +24,9 @@ pub fn doClientRequest(default: usize, request: usize, a1: usize, a2: usize, a3:
                 \\ rolq $3,  %%rdi ; rolq $13, %%rdi
                 \\ rolq $61, %%rdi ; rolq $51, %%rdi
                 \\ xchgq %%rbx,%%rbx
-                : [_] "={rdx}" (-> usize)
+                : [_] "={rdx}" (-> usize),
                 : [_] "{rax}" (&[_]usize{ request, a1, a2, a3, a4, a5 }),
-                  [_] "0" (default)
+                  [_] "0" (default),
                 : "cc", "memory"
             );
         },
@@ -43,7 +43,7 @@ pub fn doClientRequest(default: usize, request: usize, a1: usize, a2: usize, a3:
     }
 }
 
-pub const ClientRequest = extern enum {
+pub const ClientRequest = enum(u32) {
     RunningOnValgrind = 4097,
     DiscardTranslations = 4098,
     ClientCall0 = 4353,
@@ -151,9 +151,9 @@ pub fn freeLikeBlock(addr: [*]u8, rzB: usize) void {
 }
 
 /// Create a memory pool.
-pub const MempoolFlags = extern enum {
-    AutoFree = 1,
-    MetaPool = 2,
+pub const MempoolFlags = struct {
+    pub const AutoFree = 1;
+    pub const MetaPool = 2;
 };
 pub fn createMempool(pool: [*]u8, rzB: usize, is_zeroed: bool, flags: usize) void {
     doClientRequestStmt(.CreateMempool, @ptrToInt(pool), rzB, @boolToInt(is_zeroed), flags, 0);
@@ -257,7 +257,7 @@ pub fn monitorCommand(command: [*]u8) bool {
 pub const memcheck = @import("valgrind/memcheck.zig");
 pub const callgrind = @import("valgrind/callgrind.zig");
 
-test "" {
+test {
     _ = @import("valgrind/memcheck.zig");
     _ = @import("valgrind/callgrind.zig");
 }

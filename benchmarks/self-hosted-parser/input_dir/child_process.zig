@@ -1,4 +1,5 @@
 const std = @import("std.zig");
+const builtin = @import("builtin");
 const cstr = std.cstr;
 const unicode = std.unicode;
 const io = std.io;
@@ -7,14 +8,15 @@ const os = std.os;
 const process = std.process;
 const File = std.fs.File;
 const windows = os.windows;
+const linux = os.linux;
 const mem = std.mem;
+const math = std.math;
 const debug = std.debug;
 const BufMap = std.BufMap;
-const ArrayListSentineled = std.ArrayListSentineled;
-const builtin = @import("builtin");
-const Os = builtin.Os;
+const Os = std.builtin.Os;
 const TailQueue = std.TailQueue;
 const maxInt = std.math.maxInt;
+const assert = std.debug.assert;
 
 pub const ChildProcess = struct {
     pid: if (builtin.os.tag == .windows) void else i32,
@@ -39,10 +41,10 @@ pub const ChildProcess = struct {
     stderr_behavior: StdIo,
 
     /// Set to change the user id when spawning the child process.
-    uid: if (builtin.os.tag == .windows) void else ?u32,
+    uid: if (builtin.os.tag == .windows or builtin.os.tag == .wasi) void else ?os.uid_t,
 
     /// Set to change the group id when spawning the child process.
-    gid: if (builtin.os.tag == .windows) void else ?u32,
+    gid: if (builtin.os.tag == .windows or builtin.os.tag == .wasi) void else ?os.gid_t,
 
     /// Set to change the current working directory when spawning the child process.
     cwd: ?[]const u8,
@@ -73,7 +75,7 @@ pub const ChildProcess = struct {
     } || os.ExecveError || os.SetIdError || os.ChangeCurDirError || windows.CreateProcessError || windows.WaitForSingleObjectError;
 
     pub const Term = union(enum) {
-        Exited: u32,
+        Exited: u8,
         Signal: u32,
         Stopped: u32,
         Unknown: u32,
@@ -100,8 +102,8 @@ pub const ChildProcess = struct {
             .term = null,
             .env_map = null,
             .cwd = null,
-            .uid = if (builtin.os.tag == .windows) {} else null,
-            .gid = if (builtin.os.tag == .windows) {} else null,
+            .uid = if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {} else null,
+            .gid = if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {} else null,
             .stdin = null,
             .stdout = null,
             .stderr = null,
@@ -159,7 +161,7 @@ pub const ChildProcess = struct {
             self.cleanupStreams();
             return term;
         }
-        try os.kill(self.pid, os.SIGTERM);
+        try os.kill(self.pid, os.SIG.TERM);
         self.waitUnwrapped();
         return self.term.?;
     }
@@ -180,6 +182,151 @@ pub const ChildProcess = struct {
     };
 
     pub const exec2 = @compileError("deprecated: exec2 is renamed to exec");
+
+    fn collectOutputPosix(
+        child: *const ChildProcess,
+        stdout: *std.ArrayList(u8),
+        stderr: *std.ArrayList(u8),
+        max_output_bytes: usize,
+    ) !void {
+        var poll_fds = [_]os.pollfd{
+            .{ .fd = child.stdout.?.handle, .events = os.POLL.IN, .revents = undefined },
+            .{ .fd = child.stderr.?.handle, .events = os.POLL.IN, .revents = undefined },
+        };
+
+        var dead_fds: usize = 0;
+        // We ask for ensureTotalCapacity with this much extra space. This has more of an
+        // effect on small reads because once the reads start to get larger the amount
+        // of space an ArrayList will allocate grows exponentially.
+        const bump_amt = 512;
+
+        const err_mask = os.POLL.ERR | os.POLL.NVAL | os.POLL.HUP;
+
+        while (dead_fds < poll_fds.len) {
+            const events = try os.poll(&poll_fds, std.math.maxInt(i32));
+            if (events == 0) continue;
+
+            var remove_stdout = false;
+            var remove_stderr = false;
+            // Try reading whatever is available before checking the error
+            // conditions.
+            // It's still possible to read after a POLL.HUP is received, always
+            // check if there's some data waiting to be read first.
+            if (poll_fds[0].revents & os.POLL.IN != 0) {
+                // stdout is ready.
+                const new_capacity = std.math.min(stdout.items.len + bump_amt, max_output_bytes);
+                try stdout.ensureTotalCapacity(new_capacity);
+                const buf = stdout.unusedCapacitySlice();
+                if (buf.len == 0) return error.StdoutStreamTooLong;
+                const nread = try os.read(poll_fds[0].fd, buf);
+                stdout.items.len += nread;
+
+                // Remove the fd when the EOF condition is met.
+                remove_stdout = nread == 0;
+            } else {
+                remove_stdout = poll_fds[0].revents & err_mask != 0;
+            }
+
+            if (poll_fds[1].revents & os.POLL.IN != 0) {
+                // stderr is ready.
+                const new_capacity = std.math.min(stderr.items.len + bump_amt, max_output_bytes);
+                try stderr.ensureTotalCapacity(new_capacity);
+                const buf = stderr.unusedCapacitySlice();
+                if (buf.len == 0) return error.StderrStreamTooLong;
+                const nread = try os.read(poll_fds[1].fd, buf);
+                stderr.items.len += nread;
+
+                // Remove the fd when the EOF condition is met.
+                remove_stderr = nread == 0;
+            } else {
+                remove_stderr = poll_fds[1].revents & err_mask != 0;
+            }
+
+            // Exclude the fds that signaled an error.
+            if (remove_stdout) {
+                poll_fds[0].fd = -1;
+                dead_fds += 1;
+            }
+            if (remove_stderr) {
+                poll_fds[1].fd = -1;
+                dead_fds += 1;
+            }
+        }
+    }
+
+    fn collectOutputWindows(child: *const ChildProcess, outs: [2]*std.ArrayList(u8), max_output_bytes: usize) !void {
+        const bump_amt = 512;
+        const handles = [_]windows.HANDLE{
+            child.stdout.?.handle,
+            child.stderr.?.handle,
+        };
+
+        var overlapped = [_]windows.OVERLAPPED{
+            mem.zeroes(windows.OVERLAPPED),
+            mem.zeroes(windows.OVERLAPPED),
+        };
+
+        var wait_objects: [2]windows.HANDLE = undefined;
+        var wait_object_count: u2 = 0;
+
+        // we need to cancel all pending IO before returning so our OVERLAPPED values don't go out of scope
+        defer for (wait_objects[0..wait_object_count]) |o| {
+            _ = windows.kernel32.CancelIo(o);
+        };
+
+        // Windows Async IO requires an initial call to ReadFile before waiting on the handle
+        for ([_]u1{ 0, 1 }) |i| {
+            const new_capacity = std.math.min(outs[i].items.len + bump_amt, max_output_bytes);
+            try outs[i].ensureTotalCapacity(new_capacity);
+            const buf = outs[i].unusedCapacitySlice();
+            _ = windows.kernel32.ReadFile(handles[i], buf.ptr, math.cast(u32, buf.len) catch maxInt(u32), null, &overlapped[i]);
+            wait_objects[wait_object_count] = handles[i];
+            wait_object_count += 1;
+        }
+
+        while (true) {
+            const status = windows.kernel32.WaitForMultipleObjects(wait_object_count, &wait_objects, 0, windows.INFINITE);
+            if (status == windows.WAIT_FAILED) {
+                switch (windows.kernel32.GetLastError()) {
+                    else => |err| return windows.unexpectedError(err),
+                }
+            }
+            if (status < windows.WAIT_OBJECT_0 or status > windows.WAIT_OBJECT_0 + wait_object_count - 1)
+                unreachable;
+
+            const wait_idx = status - windows.WAIT_OBJECT_0;
+
+            // this extra `i` index is needed to map the wait handle back to the stdout or stderr
+            // values since the wait_idx can change which handle it corresponds with
+            const i: u1 = if (wait_objects[wait_idx] == handles[0]) 0 else 1;
+
+            // remove completed event from the wait list
+            wait_object_count -= 1;
+            if (wait_idx == 0)
+                wait_objects[0] = wait_objects[1];
+
+            var read_bytes: u32 = undefined;
+            if (windows.kernel32.GetOverlappedResult(handles[i], &overlapped[i], &read_bytes, 0) == 0) {
+                switch (windows.kernel32.GetLastError()) {
+                    .BROKEN_PIPE => {
+                        if (wait_object_count == 0)
+                            break;
+                        continue;
+                    },
+                    else => |err| return windows.unexpectedError(err),
+                }
+            }
+
+            outs[i].items.len += read_bytes;
+            const new_capacity = std.math.min(outs[i].items.len + bump_amt, max_output_bytes);
+            try outs[i].ensureTotalCapacity(new_capacity);
+            const buf = outs[i].unusedCapacitySlice();
+            if (buf.len == 0) return if (i == 0) error.StdoutStreamTooLong else error.StderrStreamTooLong;
+            _ = windows.kernel32.ReadFile(handles[i], buf.ptr, math.cast(u32, buf.len) catch maxInt(u32), null, &overlapped[i]);
+            wait_objects[wait_object_count] = handles[i];
+            wait_object_count += 1;
+        }
+    }
 
     /// Spawns a child process, waits for it, collecting stdout and stderr, and then returns.
     /// If it succeeds, the caller owns result.stdout and result.stderr memory.
@@ -205,19 +352,41 @@ pub const ChildProcess = struct {
 
         try child.spawn();
 
-        const stdout_in = child.stdout.?.inStream();
-        const stderr_in = child.stderr.?.inStream();
+        // TODO collect output in a deadlock-avoiding way on Windows.
+        // https://github.com/ziglang/zig/issues/6343
+        if (builtin.os.tag == .haiku) {
+            const stdout_in = child.stdout.?.reader();
+            const stderr_in = child.stderr.?.reader();
 
-        // TODO need to poll to read these streams to prevent a deadlock (or rely on evented I/O).
-        const stdout = try stdout_in.readAllAlloc(args.allocator, args.max_output_bytes);
-        errdefer args.allocator.free(stdout);
-        const stderr = try stderr_in.readAllAlloc(args.allocator, args.max_output_bytes);
-        errdefer args.allocator.free(stderr);
+            const stdout = try stdout_in.readAllAlloc(args.allocator, args.max_output_bytes);
+            errdefer args.allocator.free(stdout);
+            const stderr = try stderr_in.readAllAlloc(args.allocator, args.max_output_bytes);
+            errdefer args.allocator.free(stderr);
+
+            return ExecResult{
+                .term = try child.wait(),
+                .stdout = stdout,
+                .stderr = stderr,
+            };
+        }
+
+        var stdout = std.ArrayList(u8).init(args.allocator);
+        var stderr = std.ArrayList(u8).init(args.allocator);
+        errdefer {
+            stdout.deinit();
+            stderr.deinit();
+        }
+
+        if (builtin.os.tag == .windows) {
+            try collectOutputWindows(child, [_]*std.ArrayList(u8){ &stdout, &stderr }, args.max_output_bytes);
+        } else {
+            try collectOutputPosix(child, &stdout, &stderr, args.max_output_bytes);
+        }
 
         return ExecResult{
             .term = try child.wait(),
-            .stdout = stdout,
-            .stderr = stderr,
+            .stdout = stdout.toOwnedSlice(),
+            .stderr = stderr.toOwnedSlice(),
         };
     }
 
@@ -253,7 +422,7 @@ pub const ChildProcess = struct {
             if (windows.kernel32.GetExitCodeProcess(self.handle, &exit_code) == 0) {
                 break :x Term{ .Unknown = 0 };
             } else {
-                break :x Term{ .Exited = exit_code };
+                break :x Term{ .Exited = @truncate(u8, exit_code) };
             }
         });
 
@@ -264,15 +433,13 @@ pub const ChildProcess = struct {
     }
 
     fn waitUnwrapped(self: *ChildProcess) void {
-        const status = os.waitpid(self.pid, 0);
+        const status = os.waitpid(self.pid, 0).status;
         self.cleanupStreams();
         self.handleWaitResult(status);
     }
 
     fn handleWaitResult(self: *ChildProcess, status: u32) void {
-        // TODO https://github.com/ziglang/zig/issues/3190
-        var term = self.cleanupAfterWait(status);
-        self.term = term;
+        self.term = self.cleanupAfterWait(status);
     }
 
     fn cleanupStreams(self: *ChildProcess) void {
@@ -296,7 +463,7 @@ pub const ChildProcess = struct {
         if (builtin.os.tag == .linux) {
             var fd = [1]std.os.pollfd{std.os.pollfd{
                 .fd = self.err_pipe[0],
-                .events = std.os.POLLIN,
+                .events = std.os.POLL.IN,
                 .revents = undefined,
             }};
 
@@ -306,7 +473,7 @@ pub const ChildProcess = struct {
 
             // According to eventfd(2) the descriptro is readable if the counter
             // has a value greater than 0
-            if ((fd[0].revents & std.os.POLLIN) != 0) {
+            if ((fd[0].revents & std.os.POLL.IN) != 0) {
                 const err_int = try readIntFd(self.err_pipe[0]);
                 return @errSetCast(SpawnError, @intToError(err_int));
             }
@@ -329,18 +496,18 @@ pub const ChildProcess = struct {
     }
 
     fn statusToTerm(status: u32) Term {
-        return if (os.WIFEXITED(status))
-            Term{ .Exited = os.WEXITSTATUS(status) }
-        else if (os.WIFSIGNALED(status))
-            Term{ .Signal = os.WTERMSIG(status) }
-        else if (os.WIFSTOPPED(status))
-            Term{ .Stopped = os.WSTOPSIG(status) }
+        return if (os.W.IFEXITED(status))
+            Term{ .Exited = os.W.EXITSTATUS(status) }
+        else if (os.W.IFSIGNALED(status))
+            Term{ .Signal = os.W.TERMSIG(status) }
+        else if (os.W.IFSTOPPED(status))
+            Term{ .Stopped = os.W.STOPSIG(status) }
         else
             Term{ .Unknown = status };
     }
 
     fn spawnPosix(self: *ChildProcess) SpawnError!void {
-        const pipe_flags = if (io.is_async) os.O_NONBLOCK else 0;
+        const pipe_flags = if (io.is_async) os.O.NONBLOCK else 0;
         const stdin_pipe = if (self.stdin_behavior == StdIo.Pipe) try os.pipe2(pipe_flags) else undefined;
         errdefer if (self.stdin_behavior == StdIo.Pipe) {
             destroyPipe(stdin_pipe);
@@ -358,12 +525,14 @@ pub const ChildProcess = struct {
 
         const any_ignore = (self.stdin_behavior == StdIo.Ignore or self.stdout_behavior == StdIo.Ignore or self.stderr_behavior == StdIo.Ignore);
         const dev_null_fd = if (any_ignore)
-            os.openZ("/dev/null", os.O_RDWR, 0) catch |err| switch (err) {
+            os.openZ("/dev/null", os.O.RDWR, 0) catch |err| switch (err) {
                 error.PathAlreadyExists => unreachable,
                 error.NoSpaceLeft => unreachable,
                 error.FileTooBig => unreachable,
                 error.DeviceBusy => unreachable,
                 error.FileLocksNotSupported => unreachable,
+                error.BadPathName => unreachable, // Windows-only
+                error.WouldBlock => unreachable,
                 else => |e| return e,
             }
         else
@@ -372,30 +541,48 @@ pub const ChildProcess = struct {
             if (any_ignore) os.close(dev_null_fd);
         }
 
-        var env_map_owned: BufMap = undefined;
-        var we_own_env_map: bool = undefined;
-        const env_map = if (self.env_map) |env_map| x: {
-            we_own_env_map = false;
-            break :x env_map;
-        } else x: {
-            we_own_env_map = true;
-            env_map_owned = try process.getEnvMap(self.allocator);
-            break :x &env_map_owned;
+        var arena_allocator = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena_allocator.deinit();
+        const arena = &arena_allocator.allocator;
+
+        // The POSIX standard does not allow malloc() between fork() and execve(),
+        // and `self.allocator` may be a libc allocator.
+        // I have personally observed the child process deadlocking when it tries
+        // to call malloc() due to a heap allocation between fork() and execve(),
+        // in musl v1.1.24.
+        // Additionally, we want to reduce the number of possible ways things
+        // can fail between fork() and execve().
+        // Therefore, we do all the allocation for the execve() before the fork().
+        // This means we must do the null-termination of argv and env vars here.
+        const argv_buf = try arena.allocSentinel(?[*:0]u8, self.argv.len, null);
+        for (self.argv) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
+
+        const envp = m: {
+            if (self.env_map) |env_map| {
+                const envp_buf = try createNullDelimitedEnvMap(arena, env_map);
+                break :m envp_buf.ptr;
+            } else if (builtin.link_libc) {
+                break :m std.c.environ;
+            } else if (builtin.output_mode == .Exe) {
+                // Then we have Zig start code and this works.
+                // TODO type-safety for null-termination of `os.environ`.
+                break :m @ptrCast([*:null]?[*:0]u8, os.environ.ptr);
+            } else {
+                // TODO come up with a solution for this.
+                @compileError("missing std lib enhancement: ChildProcess implementation has no way to collect the environment variables to forward to the child process");
+            }
         };
-        defer {
-            if (we_own_env_map) env_map_owned.deinit();
-        }
 
         // This pipe is used to communicate errors between the time of fork
         // and execve from the child process to the parent process.
         const err_pipe = blk: {
             if (builtin.os.tag == .linux) {
-                const fd = try os.eventfd(0, 0);
+                const fd = try os.eventfd(0, linux.EFD.CLOEXEC);
                 // There's no distinction between the readable and the writeable
                 // end with eventfd
                 break :blk [2]os.fd_t{ fd, fd };
             } else {
-                break :blk try os.pipe();
+                break :blk try os.pipe2(os.O.CLOEXEC);
             }
         };
         errdefer destroyPipe(err_pipe);
@@ -434,7 +621,10 @@ pub const ChildProcess = struct {
                 os.setreuid(uid, uid) catch |err| forkChildErrReport(err_pipe[1], err);
             }
 
-            const err = os.execvpe_expandArg0(self.allocator, self.expand_arg0, self.argv, env_map);
+            const err = switch (self.expand_arg0) {
+                .expand => os.execvpeZ_expandArg0(.expand, argv_buf.ptr[0].?, argv_buf.ptr, envp),
+                .no_expand => os.execvpeZ_expandArg0(.no_expand, argv_buf.ptr[0].?, argv_buf.ptr, envp),
+            };
             forkChildErrReport(err_pipe[1], err);
         }
 
@@ -480,25 +670,20 @@ pub const ChildProcess = struct {
 
         const any_ignore = (self.stdin_behavior == StdIo.Ignore or self.stdout_behavior == StdIo.Ignore or self.stderr_behavior == StdIo.Ignore);
 
-        // TODO use CreateFileW here since we are using a string literal for the path
         const nul_handle = if (any_ignore)
-            windows.CreateFile(
-                "NUL",
-                windows.GENERIC_READ,
-                windows.FILE_SHARE_READ,
-                null,
-                windows.OPEN_EXISTING,
-                windows.FILE_ATTRIBUTE_NORMAL,
-                null,
-            ) catch |err| switch (err) {
-                error.SharingViolation => unreachable, // not possible for "NUL"
+            // "\Device\Null" or "\??\NUL"
+            windows.OpenFile(&[_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'N', 'u', 'l', 'l' }, .{
+                .access_mask = windows.GENERIC_READ | windows.SYNCHRONIZE,
+                .share_access = windows.FILE_SHARE_READ,
+                .creation = windows.OPEN_EXISTING,
+                .io_mode = .blocking,
+            }) catch |err| switch (err) {
                 error.PathAlreadyExists => unreachable, // not possible for "NUL"
                 error.PipeBusy => unreachable, // not possible for "NUL"
-                error.InvalidUtf8 => unreachable, // not possible for "NUL"
-                error.BadPathName => unreachable, // not possible for "NUL"
                 error.FileNotFound => unreachable, // not possible for "NUL"
                 error.AccessDenied => unreachable, // not possible for "NUL"
                 error.NameTooLong => unreachable, // not possible for "NUL"
+                error.WouldBlock => unreachable, // not possible for "NUL"
                 else => |e| return e,
             }
         else
@@ -534,7 +719,7 @@ pub const ChildProcess = struct {
         var g_hChildStd_OUT_Wr: ?windows.HANDLE = null;
         switch (self.stdout_behavior) {
             StdIo.Pipe => {
-                try windowsMakePipeOut(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &saAttr);
+                try windowsMakeAsyncPipe(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &saAttr);
             },
             StdIo.Ignore => {
                 g_hChildStd_OUT_Wr = nul_handle;
@@ -554,7 +739,7 @@ pub const ChildProcess = struct {
         var g_hChildStd_ERR_Wr: ?windows.HANDLE = null;
         switch (self.stderr_behavior) {
             StdIo.Pipe => {
-                try windowsMakePipeOut(&g_hChildStd_ERR_Rd, &g_hChildStd_ERR_Wr, &saAttr);
+                try windowsMakeAsyncPipe(&g_hChildStd_ERR_Rd, &g_hChildStd_ERR_Wr, &saAttr);
             },
             StdIo.Ignore => {
                 g_hChildStd_ERR_Wr = nul_handle;
@@ -648,12 +833,12 @@ pub const ChildProcess = struct {
 
             const app_name = self.argv[0];
 
-            var it = mem.tokenize(PATH, ";");
+            var it = mem.tokenize(u8, PATH, ";");
             retry: while (it.next()) |search_path| {
                 const path_no_ext = try fs.path.join(self.allocator, &[_][]const u8{ search_path, app_name });
                 defer self.allocator.free(path_no_ext);
 
-                var ext_it = mem.tokenize(PATHEXT, ";");
+                var ext_it = mem.tokenize(u8, PATHEXT, ";");
                 while (ext_it.next()) |app_ext| {
                     const joined_path = try mem.concat(self.allocator, u8, &[_][]const u8{ path_no_ext, app_ext });
                     defer self.allocator.free(joined_path);
@@ -749,38 +934,37 @@ fn windowsCreateProcess(app_name: [*:0]u16, cmd_line: [*:0]u16, envp_ptr: ?[*]u1
 
 /// Caller must dealloc.
 fn windowsCreateCommandLine(allocator: *mem.Allocator, argv: []const []const u8) ![:0]u8 {
-    var buf = try ArrayListSentineled(u8, 0).initSize(allocator, 0);
+    var buf = std.ArrayList(u8).init(allocator);
     defer buf.deinit();
-    const buf_stream = buf.outStream();
 
     for (argv) |arg, arg_i| {
-        if (arg_i != 0) try buf_stream.writeByte(' ');
+        if (arg_i != 0) try buf.append(' ');
         if (mem.indexOfAny(u8, arg, " \t\n\"") == null) {
-            try buf_stream.writeAll(arg);
+            try buf.appendSlice(arg);
             continue;
         }
-        try buf_stream.writeByte('"');
+        try buf.append('"');
         var backslash_count: usize = 0;
         for (arg) |byte| {
             switch (byte) {
                 '\\' => backslash_count += 1,
                 '"' => {
-                    try buf_stream.writeByteNTimes('\\', backslash_count * 2 + 1);
-                    try buf_stream.writeByte('"');
+                    try buf.appendNTimes('\\', backslash_count * 2 + 1);
+                    try buf.append('"');
                     backslash_count = 0;
                 },
                 else => {
-                    try buf_stream.writeByteNTimes('\\', backslash_count);
-                    try buf_stream.writeByte(byte);
+                    try buf.appendNTimes('\\', backslash_count);
+                    try buf.append(byte);
                     backslash_count = 0;
                 },
             }
         }
-        try buf_stream.writeByteNTimes('\\', backslash_count * 2);
-        try buf_stream.writeByte('"');
+        try buf.appendNTimes('\\', backslash_count * 2);
+        try buf.append('"');
     }
 
-    return buf.toOwnedSlice();
+    return buf.toOwnedSliceSentinel(0);
 }
 
 fn windowsDestroyPipe(rd: ?windows.HANDLE, wr: ?windows.HANDLE) void {
@@ -798,14 +982,64 @@ fn windowsMakePipeIn(rd: *?windows.HANDLE, wr: *?windows.HANDLE, sattr: *const w
     wr.* = wr_h;
 }
 
-fn windowsMakePipeOut(rd: *?windows.HANDLE, wr: *?windows.HANDLE, sattr: *const windows.SECURITY_ATTRIBUTES) !void {
-    var rd_h: windows.HANDLE = undefined;
-    var wr_h: windows.HANDLE = undefined;
-    try windows.CreatePipe(&rd_h, &wr_h, sattr);
-    errdefer windowsDestroyPipe(rd_h, wr_h);
-    try windows.SetHandleInformation(rd_h, windows.HANDLE_FLAG_INHERIT, 0);
-    rd.* = rd_h;
-    wr.* = wr_h;
+var pipe_name_counter = std.atomic.Atomic(u32).init(1);
+
+fn windowsMakeAsyncPipe(rd: *?windows.HANDLE, wr: *?windows.HANDLE, sattr: *const windows.SECURITY_ATTRIBUTES) !void {
+    var tmp_bufw: [128]u16 = undefined;
+
+    // We must make a named pipe on windows because anonymous pipes do not support async IO
+    const pipe_path = blk: {
+        var tmp_buf: [128]u8 = undefined;
+        // Forge a random path for the pipe.
+        const pipe_path = std.fmt.bufPrintZ(
+            &tmp_buf,
+            "\\\\.\\pipe\\zig-childprocess-{d}-{d}",
+            .{ windows.kernel32.GetCurrentProcessId(), pipe_name_counter.fetchAdd(1, .Monotonic) },
+        ) catch unreachable;
+        const len = std.unicode.utf8ToUtf16Le(&tmp_bufw, pipe_path) catch unreachable;
+        tmp_bufw[len] = 0;
+        break :blk tmp_bufw[0..len :0];
+    };
+
+    // Create the read handle that can be used with overlapped IO ops.
+    const read_handle = windows.kernel32.CreateNamedPipeW(
+        pipe_path.ptr,
+        windows.PIPE_ACCESS_INBOUND | windows.FILE_FLAG_OVERLAPPED,
+        windows.PIPE_TYPE_BYTE,
+        1,
+        4096,
+        4096,
+        0,
+        sattr,
+    );
+    if (read_handle == windows.INVALID_HANDLE_VALUE) {
+        switch (windows.kernel32.GetLastError()) {
+            else => |err| return windows.unexpectedError(err),
+        }
+    }
+    errdefer os.close(read_handle);
+
+    var sattr_copy = sattr.*;
+    const write_handle = windows.kernel32.CreateFileW(
+        pipe_path.ptr,
+        windows.GENERIC_WRITE,
+        0,
+        &sattr_copy,
+        windows.OPEN_EXISTING,
+        windows.FILE_ATTRIBUTE_NORMAL,
+        null,
+    );
+    if (write_handle == windows.INVALID_HANDLE_VALUE) {
+        switch (windows.kernel32.GetLastError()) {
+            else => |err| return windows.unexpectedError(err),
+        }
+    }
+    errdefer os.close(write_handle);
+
+    try windows.SetHandleInformation(read_handle, windows.HANDLE_FLAG_INHERIT, 0);
+
+    rd.* = read_handle;
+    wr.* = write_handle;
 }
 
 fn destroyPipe(pipe: [2]os.fd_t) void {
@@ -817,10 +1051,18 @@ fn destroyPipe(pipe: [2]os.fd_t) void {
 // Then the child exits.
 fn forkChildErrReport(fd: i32, err: ChildProcess.SpawnError) noreturn {
     writeIntFd(fd, @as(ErrInt, @errorToInt(err))) catch {};
+    // If we're linking libc, some naughty applications may have registered atexit handlers
+    // which we really do not want to run in the fork child. I caught LLVM doing this and
+    // it caused a deadlock instead of doing an exit syscall. In the words of Avril Lavigne,
+    // "Why'd you have to go and make things so complicated?"
+    if (builtin.link_libc) {
+        // The _exit(2) function does nothing but make the exit syscall, unlike exit(3)
+        std.c._exit(1);
+    }
     os.exit(1);
 }
 
-const ErrInt = std.meta.Int(false, @sizeOf(anyerror) * 8);
+const ErrInt = std.meta.Int(.unsigned, @sizeOf(anyerror) * 8);
 
 fn writeIntFd(fd: i32, value: ErrInt) !void {
     const file = File{
@@ -828,7 +1070,7 @@ fn writeIntFd(fd: i32, value: ErrInt) !void {
         .capable_io_mode = .blocking,
         .intended_io_mode = .blocking,
     };
-    file.outStream().writeIntNative(u64, @intCast(u64, value)) catch return error.SystemResources;
+    file.writer().writeIntNative(u64, @intCast(u64, value)) catch return error.SystemResources;
 }
 
 fn readIntFd(fd: i32) !ErrInt {
@@ -837,7 +1079,7 @@ fn readIntFd(fd: i32) !ErrInt {
         .capable_io_mode = .blocking,
         .intended_io_mode = .blocking,
     };
-    return @intCast(ErrInt, file.inStream().readIntNative(u64) catch return error.SystemResources);
+    return @intCast(ErrInt, file.reader().readIntNative(u64) catch return error.SystemResources);
 }
 
 /// Caller must free result.
@@ -849,7 +1091,7 @@ pub fn createWindowsEnvBlock(allocator: *mem.Allocator, env_map: *const BufMap) 
         while (it.next()) |pair| {
             // +1 for '='
             // +1 for null byte
-            max_chars_needed += pair.key.len + pair.value.len + 2;
+            max_chars_needed += pair.key_ptr.len + pair.value_ptr.len + 2;
         }
         break :x max_chars_needed;
     };
@@ -859,10 +1101,10 @@ pub fn createWindowsEnvBlock(allocator: *mem.Allocator, env_map: *const BufMap) 
     var it = env_map.iterator();
     var i: usize = 0;
     while (it.next()) |pair| {
-        i += try unicode.utf8ToUtf16Le(result[i..], pair.key);
+        i += try unicode.utf8ToUtf16Le(result[i..], pair.key_ptr.*);
         result[i] = '=';
         i += 1;
-        i += try unicode.utf8ToUtf16Le(result[i..], pair.value);
+        i += try unicode.utf8ToUtf16Le(result[i..], pair.value_ptr.*);
         result[i] = 0;
         i += 1;
     }
@@ -875,4 +1117,55 @@ pub fn createWindowsEnvBlock(allocator: *mem.Allocator, env_map: *const BufMap) 
     result[i] = 0;
     i += 1;
     return allocator.shrink(result, i);
+}
+
+pub fn createNullDelimitedEnvMap(arena: *mem.Allocator, env_map: *const std.BufMap) ![:null]?[*:0]u8 {
+    const envp_count = env_map.count();
+    const envp_buf = try arena.allocSentinel(?[*:0]u8, envp_count, null);
+    {
+        var it = env_map.iterator();
+        var i: usize = 0;
+        while (it.next()) |pair| : (i += 1) {
+            const env_buf = try arena.allocSentinel(u8, pair.key_ptr.len + pair.value_ptr.len + 1, 0);
+            mem.copy(u8, env_buf, pair.key_ptr.*);
+            env_buf[pair.key_ptr.len] = '=';
+            mem.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.*);
+            envp_buf[i] = env_buf.ptr;
+        }
+        assert(i == envp_count);
+    }
+    return envp_buf;
+}
+
+test "createNullDelimitedEnvMap" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    var envmap = BufMap.init(allocator);
+    defer envmap.deinit();
+
+    try envmap.put("HOME", "/home/ifreund");
+    try envmap.put("WAYLAND_DISPLAY", "wayland-1");
+    try envmap.put("DISPLAY", ":1");
+    try envmap.put("DEBUGINFOD_URLS", " ");
+    try envmap.put("XCURSOR_SIZE", "24");
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const environ = try createNullDelimitedEnvMap(&arena.allocator, &envmap);
+
+    try testing.expectEqual(@as(usize, 5), environ.len);
+
+    inline for (.{
+        "HOME=/home/ifreund",
+        "WAYLAND_DISPLAY=wayland-1",
+        "DISPLAY=:1",
+        "DEBUGINFOD_URLS= ",
+        "XCURSOR_SIZE=24",
+    }) |target| {
+        for (environ) |variable| {
+            if (mem.eql(u8, mem.span(variable orelse continue), target)) break;
+        } else {
+            try testing.expect(false); // Environment variable not found
+        }
+    }
 }

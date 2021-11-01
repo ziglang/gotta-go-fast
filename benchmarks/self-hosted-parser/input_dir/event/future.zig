@@ -1,7 +1,7 @@
 const std = @import("../std.zig");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const testing = std.testing;
-const builtin = @import("builtin");
 const Lock = std.event.Lock;
 
 /// This is a value that starts out unavailable, until resolve() is called
@@ -90,7 +90,7 @@ test "std.event.Future" {
     // TODO provide a way to run tests in evented I/O mode
     if (!std.io.is_async) return error.SkipZigTest;
 
-    const handle = async testFuture();
+    testFuture();
 }
 
 fn testFuture() void {
@@ -102,7 +102,7 @@ fn testFuture() void {
 
     const result = (await a) + (await b);
 
-    testing.expect(result == 12);
+    try testing.expect(result == 12);
 }
 
 fn waitOnFuture(future: *Future(i32)) i32 {

@@ -52,13 +52,13 @@ pub const SimpleNetworkProtocol = extern struct {
     }
 
     /// Modifies or resets the current station address, if supported.
-    pub fn stationAddress(self: *const SimpleNetworkProtocol, reset: bool, new: ?*const MacAddress) Status {
-        return self._station_address(self, reset, new);
+    pub fn stationAddress(self: *const SimpleNetworkProtocol, reset_flag: bool, new: ?*const MacAddress) Status {
+        return self._station_address(self, reset_flag, new);
     }
 
     /// Resets or collects the statistics on a network interface.
-    pub fn statistics(self: *const SimpleNetworkProtocol, reset_: bool, statistics_size: ?*usize, statistics_table: ?*NetworkStatistics) Status {
-        return self._statistics(self, reset_, statistics_size, statistics_table);
+    pub fn statistics(self: *const SimpleNetworkProtocol, reset_flag: bool, statistics_size: ?*usize, statistics_table: ?*NetworkStatistics) Status {
+        return self._statistics(self, reset_flag, statistics_size, statistics_table);
     }
 
     /// Converts a multicast IP address to a multicast HW MAC address.
@@ -126,10 +126,12 @@ pub const SimpleNetworkReceiveFilter = packed struct {
     receive_broadcast: bool,
     receive_promiscuous: bool,
     receive_promiscuous_multicast: bool,
-    _pad: u27 = undefined,
+    _pad1: u3 = undefined,
+    _pad2: u8 = undefined,
+    _pad3: u16 = undefined,
 };
 
-pub const SimpleNetworkState = extern enum(u32) {
+pub const SimpleNetworkState = enum(u32) {
     Stopped,
     Started,
     Initialized,
@@ -169,5 +171,7 @@ pub const SimpleNetworkInterruptStatus = packed struct {
     transmit_interrupt: bool,
     command_interrupt: bool,
     software_interrupt: bool,
-    _pad: u28,
+    _pad1: u4,
+    _pad2: u8,
+    _pad3: u16,
 };
