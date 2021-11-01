@@ -12,20 +12,6 @@
     "mainPath": "zigfmt-main.zig",
     "skipLibCAllocator": true
   },
-  "stage1-behavior-tests": {
-    "description": "use the stage1 compiler to compile and run the behavior tests",
-    "kind": "zig-bench",
-    "dir": "stage1-behavior-tests",
-    "mainPath": "main.zig",
-    "skipLibCAllocator": true
-  },
-  "stage1-std-tests": {
-    "description": "use the stage1 compiler to compile and run the std lib tests",
-    "kind": "zig-bench",
-    "dir": "stage1-std-tests",
-    "mainPath": "main.zig",
-    "skipLibCAllocator": true
-  },
   "translate-c-windows-h": {
     "description": "translate-c windows.h",
     "kind": "zig-bench",
