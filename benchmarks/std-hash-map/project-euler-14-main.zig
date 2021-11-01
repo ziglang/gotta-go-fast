@@ -1,9 +1,13 @@
 const std = @import("std");
 const bench = @import("root");
 
-pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void { }
+pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {
+    _ = gpa;
+    _ = options;
+}
 
 pub fn run(gpa: *std.mem.Allocator, context: void) !void {
+    _ = context;
     var cache = std.AutoHashMap(u64, u64).init(gpa);
     defer cache.deinit();
 
@@ -26,8 +30,8 @@ pub fn run(gpa: *std.mem.Allocator, context: void) !void {
         var total: u64 = 0;
         var it = cache.iterator();
         while (it.next()) |item| {
-            total +%= item.key;
-            total +%= item.value;
+            total +%= item.key_ptr.*;
+            total +%= item.value_ptr.*;
         }
         if (total != 12387203240855) @panic("bad total");
     }

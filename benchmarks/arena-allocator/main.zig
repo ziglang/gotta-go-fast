@@ -3,17 +3,19 @@ const bench = @import("root");
 
 var rng = std.rand.DefaultPrng.init(0x1234);
 
-pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !*std.rand.Random {
-    return &rng.random;
+pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !std.rand.Random {
+    _ = gpa;
+    _ = options;
+    return rng.random();
 }
 
-pub fn run(gpa: *std.mem.Allocator, random: *std.rand.Random) !void {
+pub fn run(gpa: *std.mem.Allocator, random: std.rand.Random) !void {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
 
     const sizes =
-    // Some few weird sizes
-    [_]usize{1} ++
+        // Some few weird sizes
+        [_]usize{1} ++
         [_]usize{2} ++
         [_]usize{6} ++
         [_]usize{12} ++
@@ -21,7 +23,7 @@ pub fn run(gpa: *std.mem.Allocator, random: *std.rand.Random) !void {
         [_]usize{33} ++
         [_]usize{100} ++
         [_]usize{1000} ++
-    // Much more frequent common sizes
+        // Much more frequent common sizes
         ([_]usize{4} ** 10) ++
         ([_]usize{8} ** 20) ++
         ([_]usize{16} ** 100) ++
