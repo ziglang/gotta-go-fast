@@ -52,5 +52,23 @@
     "kind": "zig-bench",
     "dir": "std-hash-map",
     "mainPath": "random-find.zig"
+  },
+  "ast-check-os": {
+    "description": "run ast-check on std.os",
+    "kind": "zig-bench",
+    "dir": "ast-check",
+    "mainPath": "astcheck-os.zig"
+  },
+  "ast-check-AstGen": {
+    "description": "run ast-check on AstGen.zig",
+    "kind": "zig-bench",
+    "dir": "ast-check",
+    "mainPath": "astcheck-self.zig"
+  },
+  "ast-check-Sema": {
+    "description": "run ast-check on Sema.zig",
+    "kind": "zig-bench",
+    "dir": "ast-check",
+    "mainPath": "astcheck-sema.zig"
   }
 }
