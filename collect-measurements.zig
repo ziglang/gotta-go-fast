@@ -7,6 +7,7 @@ const Record = struct {
     timestamp: u64,
     benchmark_name: []const u8,
     commit_hash: [20]u8,
+    zig_version: []const u8,
     error_message: []const u8 = &[0]u8{},
     samples_taken: u64 = 0,
     wall_time_median: u64 = 0,
@@ -65,6 +66,7 @@ fn jsonToRecord(
     timestamp: u64,
     benchmark_name: []const u8,
     commit_hash: [20]u8,
+    zig_version: []const u8,
 ) !Record {
     // Example success output of benchmark program:
     // {"samples_taken":3,"wall_time":{"median":131511898884,"mean":131511898884,"min":131511898884,"max":131511898884},"utime":{"median":131507380000,"mean":131507380000,"min":131507380000,"max":131507380000},"stime":{"median":885000,"mean":885000,"min":885000,"max":885000},"cpu_cycles":{"median":506087170166,"mean":506087170166,"min":506087170166,"max":506087170166},"instructions":{"median":1013354628954,"mean":1013354628954,"min":1013354628954,"max":1013354628954},"cache_references":{"median":22131539,"mean":22131539,"min":22131539,"max":22131539},"cache_misses":{"median":4523975,"mean":4523975,"min":4523975,"max":4523975},"branch_instructions":{"median":168663786878,"mean":168663786878,"min":168663786878,"max":168663786878},"branch_misses":{"median":885333330,"mean":885333330,"min":885333330,"max":885333330},"maxrss":341004}
@@ -75,6 +77,7 @@ fn jsonToRecord(
         .timestamp = timestamp,
         .benchmark_name = try arena.dupe(u8, benchmark_name),
         .commit_hash = commit_hash,
+        .zig_version = zig_version,
     };
     if (mo == .String) {
         record.error_message = try arena.dupe(u8, mo.String);
@@ -157,6 +160,10 @@ pub fn main() !void {
     const zig_exe = args[2];
     const commit = try parseCommit(args[3]);
 
+    const zig_version_raw = try execCapture(arena, &[_][]const u8{ zig_exe, "version" }, .{});
+    const zig_version = std.mem.trim(u8, zig_version_raw, " \r\n\t");
+    std.debug.print("Detected zig version {s}...\n", .{zig_version});
+
     // Load CSV into memory
     std.debug.print("Loading CSV data...\n", .{});
     var records = std.ArrayList(Record).init(gpa);
@@ -233,7 +240,7 @@ pub fn main() !void {
     const manifest_text = try fs.cwd().readFileAlloc(gpa, "benchmarks/manifest.json", 3 * 1024 * 1024);
     const manifest_tree = try manifest_parser.parse(manifest_text);
 
-    runBenchmarks(gpa, arena, &records, &commit_table, manifest_tree.root, zig_exe, commit) catch |err| {
+    runBenchmarks(gpa, arena, &records, &commit_table, manifest_tree.root, zig_exe, commit, zig_version) catch |err| {
         std.debug.print("error running benchmarks: {s}\n", .{@errorName(err)});
     };
 
@@ -351,11 +358,9 @@ fn runBenchmarks(
     manifest: json.Value,
     zig_exe: []const u8,
     commit: [20]u8,
+    zig_version: []const u8,
 ) !void {
     try records.ensureCapacity(records.items.len + manifest.Object.count() * 2);
-
-    var commit_str: [40]u8 = undefined;
-    _ = std.fmt.bufPrint(&commit_str, "{}", .{std.fmt.fmtSliceHexLower(&commit)}) catch unreachable;
 
     const timestamp = @intCast(u64, std.time.timestamp());
 
@@ -402,6 +407,7 @@ fn runBenchmarks(
             timestamp,
             benchmark_name,
             commit,
+            zig_version,
         );
 
         const key: Record.Key = .{
