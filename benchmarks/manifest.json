@@ -3,56 +3,54 @@
     "description": "walk std lib, parse, iterate nodes",
     "kind": "zig-bench",
     "dir": "self-hosted-parser",
-    "mainPath": "main.zig",
+    "mainPath": "main.zig"
   },
   "zig-fmt": {
     "description": "run zig fmt on the std lib",
     "kind": "zig-bench",
     "dir": "self-hosted-parser",
-    "mainPath": "zigfmt-main.zig",
-    "skipLibCAllocator": true
+    "mainPath": "zigfmt-main.zig"
   },
   "translate-c-windows-h": {
     "description": "translate-c windows.h",
     "kind": "zig-bench",
     "dir": "translate-c",
-    "mainPath": "main.zig",
-    "skipLibCAllocator": true
+    "mainPath": "main.zig"
   },
   "arena-allocator": {
     "description": "general-purpose usage of std.heap.ArenaAllocator",
     "kind": "zig-bench",
     "dir": "arena-allocator",
-    "mainPath": "main.zig",
+    "mainPath": "main.zig"
   },
   "std-rand": {
     "description": "random number generation",
     "kind": "zig-bench",
     "dir": "rand",
-    "mainPath": "main.zig",
+    "mainPath": "main.zig"
   },
   "std-hash-map": {
     "description": "std.AutoHashMap - Project Euler 14",
     "kind": "zig-bench",
     "dir": "std-hash-map",
-    "mainPath": "project-euler-14-main.zig",
+    "mainPath": "project-euler-14-main.zig"
   },
   "insert-10M-int": {
     "description": "std.AutoHashMap - Insert 10M int",
     "kind": "zig-bench",
     "dir": "std-hash-map",
-    "mainPath": "insert-10M-int.zig",
+    "mainPath": "insert-10M-int.zig"
   },
   "random-distinct": {
     "description": "std.AutoHashMap - Random distinct",
     "kind": "zig-bench",
     "dir": "std-hash-map",
-    "mainPath": "random-distinct.zig",
+    "mainPath": "random-distinct.zig"
   },
   "random-find": {
     "description": "std.AutoHashMap - Random find",
     "kind": "zig-bench",
     "dir": "std-hash-map",
-    "mainPath": "random-find.zig",
+    "mainPath": "random-find.zig"
   }
 }

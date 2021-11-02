@@ -33,6 +33,7 @@ noise.
 
  * Wall Clock Time
  * Peak Resident Set Size (memory usage)
+ * How many times the benchmark was executed in 5 seconds
  * instructions
  * cycles
  * cache-misses
@@ -44,7 +45,6 @@ Metadata:
 
  * Benchmark name
  * Timestamp of when the benchmark was executed
- * How many times the benchmark was executed in 5 seconds
  * Zig Git Commit SHA1
  * Zig Git Commit Message
  * Zig Git Commit Date
