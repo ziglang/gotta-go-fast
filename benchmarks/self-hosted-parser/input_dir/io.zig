@@ -101,15 +101,15 @@ pub fn getStdIn() File {
     };
 }
 
-pub const InStream = @import("io/in_stream.zig").InStream;
-pub const OutStream = @import("io/out_stream.zig").OutStream;
+pub const Reader = @import("io/reader.zig").Reader;
+pub const Writer = @import("io/writer.zig").Writer;
 pub const SeekableStream = @import("io/seekable_stream.zig").SeekableStream;
 
-pub const BufferedOutStream = @import("io/buffered_out_stream.zig").BufferedOutStream;
-pub const bufferedOutStream = @import("io/buffered_out_stream.zig").bufferedOutStream;
+pub const BufferedWriter = @import("io/buffered_writer.zig").BufferedWriter;
+pub const bufferedWriter = @import("io/buffered_writer.zig").bufferedWriter;
 
-pub const BufferedInStream = @import("io/buffered_in_stream.zig").BufferedInStream;
-pub const bufferedInStream = @import("io/buffered_in_stream.zig").bufferedInStream;
+pub const BufferedReader = @import("io/buffered_reader.zig").BufferedReader;
+pub const bufferedReader = @import("io/buffered_reader.zig").bufferedReader;
 
 pub const PeekStream = @import("io/peek_stream.zig").PeekStream;
 pub const peekStream = @import("io/peek_stream.zig").peekStream;
@@ -117,59 +117,67 @@ pub const peekStream = @import("io/peek_stream.zig").peekStream;
 pub const FixedBufferStream = @import("io/fixed_buffer_stream.zig").FixedBufferStream;
 pub const fixedBufferStream = @import("io/fixed_buffer_stream.zig").fixedBufferStream;
 
-pub const COutStream = @import("io/c_out_stream.zig").COutStream;
-pub const cOutStream = @import("io/c_out_stream.zig").cOutStream;
+pub const CWriter = @import("io/c_writer.zig").CWriter;
+pub const cWriter = @import("io/c_writer.zig").cWriter;
 
-pub const CountingOutStream = @import("io/counting_out_stream.zig").CountingOutStream;
-pub const countingOutStream = @import("io/counting_out_stream.zig").countingOutStream;
+pub const LimitedReader = @import("io/limited_reader.zig").LimitedReader;
+pub const limitedReader = @import("io/limited_reader.zig").limitedReader;
 
-pub const MultiOutStream = @import("io/multi_out_stream.zig").MultiOutStream;
-pub const multiOutStream = @import("io/multi_out_stream.zig").multiOutStream;
+pub const CountingWriter = @import("io/counting_writer.zig").CountingWriter;
+pub const countingWriter = @import("io/counting_writer.zig").countingWriter;
+pub const CountingReader = @import("io/counting_reader.zig").CountingReader;
+pub const countingReader = @import("io/counting_reader.zig").countingReader;
 
-pub const BitInStream = @import("io/bit_in_stream.zig").BitInStream;
-pub const bitInStream = @import("io/bit_in_stream.zig").bitInStream;
+pub const MultiWriter = @import("io/multi_writer.zig").MultiWriter;
+pub const multiWriter = @import("io/multi_writer.zig").multiWriter;
 
-pub const BitOutStream = @import("io/bit_out_stream.zig").BitOutStream;
-pub const bitOutStream = @import("io/bit_out_stream.zig").bitOutStream;
+pub const BitReader = @import("io/bit_reader.zig").BitReader;
+pub const bitReader = @import("io/bit_reader.zig").bitReader;
 
-pub const Packing = @import("io/serialization.zig").Packing;
+pub const BitWriter = @import("io/bit_writer.zig").BitWriter;
+pub const bitWriter = @import("io/bit_writer.zig").bitWriter;
 
-pub const Serializer = @import("io/serialization.zig").Serializer;
-pub const serializer = @import("io/serialization.zig").serializer;
+pub const ChangeDetectionStream = @import("io/change_detection_stream.zig").ChangeDetectionStream;
+pub const changeDetectionStream = @import("io/change_detection_stream.zig").changeDetectionStream;
 
-pub const Deserializer = @import("io/serialization.zig").Deserializer;
-pub const deserializer = @import("io/serialization.zig").deserializer;
+pub const FindByteWriter = @import("io/find_byte_writer.zig").FindByteWriter;
+pub const findByteWriter = @import("io/find_byte_writer.zig").findByteWriter;
+/// Deprecated: use `FindByteWriter`.
+pub const FindByteOutStream = FindByteWriter;
+/// Deprecated: use `findByteWriter`.
+pub const findByteOutStream = findByteWriter;
 
 pub const BufferedAtomicFile = @import("io/buffered_atomic_file.zig").BufferedAtomicFile;
 
 pub const StreamSource = @import("io/stream_source.zig").StreamSource;
 
-/// An OutStream that doesn't write to anything.
-pub const null_out_stream = @as(NullOutStream, .{ .context = {} });
+/// A Writer that doesn't write to anything.
+pub const null_writer = @as(NullWriter, .{ .context = {} });
 
-const NullOutStream = OutStream(void, error{}, dummyWrite);
+const NullWriter = Writer(void, error{}, dummyWrite);
 fn dummyWrite(context: void, data: []const u8) error{}!usize {
+    _ = context;
     return data.len;
 }
 
-test "null_out_stream" {
-    null_out_stream.writeAll("yay" ** 10) catch |err| switch (err) {};
+test "null_writer" {
+    null_writer.writeAll("yay" ** 10) catch |err| switch (err) {};
 }
 
-test "" {
-    _ = @import("io/bit_in_stream.zig");
-    _ = @import("io/bit_out_stream.zig");
+test {
+    _ = @import("io/bit_reader.zig");
+    _ = @import("io/bit_writer.zig");
     _ = @import("io/buffered_atomic_file.zig");
-    _ = @import("io/buffered_in_stream.zig");
-    _ = @import("io/buffered_out_stream.zig");
-    _ = @import("io/c_out_stream.zig");
-    _ = @import("io/counting_out_stream.zig");
+    _ = @import("io/buffered_reader.zig");
+    _ = @import("io/buffered_writer.zig");
+    _ = @import("io/c_writer.zig");
+    _ = @import("io/counting_writer.zig");
+    _ = @import("io/counting_reader.zig");
     _ = @import("io/fixed_buffer_stream.zig");
-    _ = @import("io/in_stream.zig");
-    _ = @import("io/out_stream.zig");
+    _ = @import("io/reader.zig");
+    _ = @import("io/writer.zig");
     _ = @import("io/peek_stream.zig");
     _ = @import("io/seekable_stream.zig");
-    _ = @import("io/serialization.zig");
     _ = @import("io/stream_source.zig");
     _ = @import("io/test.zig");
 }

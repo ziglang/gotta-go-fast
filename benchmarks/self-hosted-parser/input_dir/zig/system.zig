@@ -1,4 +1,5 @@
 const std = @import("../std.zig");
+const builtin = @import("builtin");
 const elf = std.elf;
 const mem = std.mem;
 const fs = std.fs;
@@ -8,20 +9,25 @@ const assert = std.debug.assert;
 const process = std.process;
 const Target = std.Target;
 const CrossTarget = std.zig.CrossTarget;
-const macos = @import("system/macos.zig");
-
-const is_windows = Target.current.os.tag == .windows;
+const native_endian = builtin.cpu.arch.endian();
+const linux = @import("system/linux.zig");
+pub const windows = @import("system/windows.zig");
+pub const darwin = @import("system/darwin.zig");
 
 pub const NativePaths = struct {
     include_dirs: ArrayList([:0]u8),
     lib_dirs: ArrayList([:0]u8),
+    framework_dirs: ArrayList([:0]u8),
     rpaths: ArrayList([:0]u8),
     warnings: ArrayList([:0]u8),
 
-    pub fn detect(allocator: *Allocator) !NativePaths {
+    pub fn detect(allocator: *Allocator, native_info: NativeTargetInfo) !NativePaths {
+        const native_target = native_info.target;
+
         var self: NativePaths = .{
             .include_dirs = ArrayList([:0]u8).init(allocator),
             .lib_dirs = ArrayList([:0]u8).init(allocator),
+            .framework_dirs = ArrayList([:0]u8).init(allocator),
             .rpaths = ArrayList([:0]u8).init(allocator),
             .warnings = ArrayList([:0]u8).init(allocator),
         };
@@ -32,7 +38,7 @@ pub const NativePaths = struct {
             defer allocator.free(nix_cflags_compile);
 
             is_nix = true;
-            var it = mem.tokenize(nix_cflags_compile, " ");
+            var it = mem.tokenize(u8, nix_cflags_compile, " ");
             while (true) {
                 const word = it.next() orelse break;
                 if (mem.eql(u8, word, "-isystem")) {
@@ -42,8 +48,10 @@ pub const NativePaths = struct {
                     };
                     try self.addIncludeDir(include_path);
                 } else {
-                    try self.addWarningFmt("Unrecognized C flag from NIX_CFLAGS_COMPILE: {}", .{word});
-                    break;
+                    if (mem.startsWith(u8, word, "-frandom-seed=")) {
+                        continue;
+                    }
+                    try self.addWarningFmt("Unrecognized C flag from NIX_CFLAGS_COMPILE: {s}", .{word});
                 }
             }
         } else |err| switch (err) {
@@ -55,7 +63,7 @@ pub const NativePaths = struct {
             defer allocator.free(nix_ldflags);
 
             is_nix = true;
-            var it = mem.tokenize(nix_ldflags, " ");
+            var it = mem.tokenize(u8, nix_ldflags, " ");
             while (true) {
                 const word = it.next() orelse break;
                 if (mem.eql(u8, word, "-rpath")) {
@@ -68,7 +76,7 @@ pub const NativePaths = struct {
                     const lib_path = word[2..];
                     try self.addLibDir(lib_path);
                 } else {
-                    try self.addWarningFmt("Unrecognized C flag from NIX_LDFLAGS: {}", .{word});
+                    try self.addWarningFmt("Unrecognized C flag from NIX_LDFLAGS: {s}", .{word});
                     break;
                 }
             }
@@ -81,8 +89,33 @@ pub const NativePaths = struct {
             return self;
         }
 
-        if (!is_windows) {
-            const triple = try Target.current.linuxTriple(allocator);
+        if (comptime builtin.target.isDarwin()) {
+            try self.addIncludeDir("/usr/include");
+            try self.addIncludeDir("/usr/local/include");
+
+            try self.addLibDir("/usr/lib");
+            try self.addLibDir("/usr/local/lib");
+
+            try self.addFrameworkDir("/Library/Frameworks");
+            try self.addFrameworkDir("/System/Library/Frameworks");
+
+            return self;
+        }
+
+        if (comptime native_target.os.tag == .solaris) {
+            try self.addLibDir("/usr/lib/64");
+            try self.addLibDir("/usr/local/lib/64");
+            try self.addLibDir("/lib/64");
+
+            try self.addIncludeDir("/usr/include");
+            try self.addIncludeDir("/usr/local/include");
+
+            return self;
+        }
+
+        if (native_target.os.tag != .windows) {
+            const triple = try native_target.linuxTriple(allocator);
+            const qual = native_target.cpu.arch.ptrBitWidth();
 
             // TODO: $ ld --verbose | grep SEARCH_DIR
             // the output contains some paths that end with lib64, maybe include them too?
@@ -90,22 +123,22 @@ pub const NativePaths = struct {
             // TODO: some of these are suspect and should only be added on some systems. audit needed.
 
             try self.addIncludeDir("/usr/local/include");
+            try self.addLibDirFmt("/usr/local/lib{d}", .{qual});
             try self.addLibDir("/usr/local/lib");
-            try self.addLibDir("/usr/local/lib64");
 
-            try self.addIncludeDirFmt("/usr/include/{}", .{triple});
-            try self.addLibDirFmt("/usr/lib/{}", .{triple});
+            try self.addIncludeDirFmt("/usr/include/{s}", .{triple});
+            try self.addLibDirFmt("/usr/lib/{s}", .{triple});
 
             try self.addIncludeDir("/usr/include");
+            try self.addLibDirFmt("/lib{d}", .{qual});
             try self.addLibDir("/lib");
-            try self.addLibDir("/lib64");
+            try self.addLibDirFmt("/usr/lib{d}", .{qual});
             try self.addLibDir("/usr/lib");
-            try self.addLibDir("/usr/lib64");
 
             // example: on a 64-bit debian-based linux distro, with zlib installed from apt:
             // zlib.h is in /usr/include (added above)
             // libz.so.1 is in /lib/x86_64-linux-gnu (added here)
-            try self.addLibDirFmt("/lib/{}", .{triple});
+            try self.addLibDirFmt("/lib/{s}", .{triple});
         }
 
         return self;
@@ -114,13 +147,14 @@ pub const NativePaths = struct {
     pub fn deinit(self: *NativePaths) void {
         deinitArray(&self.include_dirs);
         deinitArray(&self.lib_dirs);
+        deinitArray(&self.framework_dirs);
         deinitArray(&self.rpaths);
         deinitArray(&self.warnings);
         self.* = undefined;
     }
 
     fn deinitArray(array: *ArrayList([:0]u8)) void {
-        for (array.span()) |item| {
+        for (array.items) |item| {
             array.allocator.free(item);
         }
         array.deinit();
@@ -130,7 +164,7 @@ pub const NativePaths = struct {
         return self.appendArray(&self.include_dirs, s);
     }
 
-    pub fn addIncludeDirFmt(self: *NativePaths, comptime fmt: []const u8, args: var) !void {
+    pub fn addIncludeDirFmt(self: *NativePaths, comptime fmt: []const u8, args: anytype) !void {
         const item = try std.fmt.allocPrint0(self.include_dirs.allocator, fmt, args);
         errdefer self.include_dirs.allocator.free(item);
         try self.include_dirs.append(item);
@@ -140,7 +174,7 @@ pub const NativePaths = struct {
         return self.appendArray(&self.lib_dirs, s);
     }
 
-    pub fn addLibDirFmt(self: *NativePaths, comptime fmt: []const u8, args: var) !void {
+    pub fn addLibDirFmt(self: *NativePaths, comptime fmt: []const u8, args: anytype) !void {
         const item = try std.fmt.allocPrint0(self.lib_dirs.allocator, fmt, args);
         errdefer self.lib_dirs.allocator.free(item);
         try self.lib_dirs.append(item);
@@ -150,7 +184,17 @@ pub const NativePaths = struct {
         return self.appendArray(&self.warnings, s);
     }
 
-    pub fn addWarningFmt(self: *NativePaths, comptime fmt: []const u8, args: var) !void {
+    pub fn addFrameworkDir(self: *NativePaths, s: []const u8) !void {
+        return self.appendArray(&self.framework_dirs, s);
+    }
+
+    pub fn addFrameworkDirFmt(self: *NativePaths, comptime fmt: []const u8, args: anytype) !void {
+        const item = try std.fmt.allocPrint0(self.framework_dirs.allocator, fmt, args);
+        errdefer self.framework_dirs.allocator.free(item);
+        try self.framework_dirs.append(item);
+    }
+
+    pub fn addWarningFmt(self: *NativePaths, comptime fmt: []const u8, args: anytype) !void {
         const item = try std.fmt.allocPrint0(self.warnings.allocator, fmt, args);
         errdefer self.warnings.allocator.free(item);
         try self.warnings.append(item);
@@ -161,7 +205,8 @@ pub const NativePaths = struct {
     }
 
     fn appendArray(self: *NativePaths, array: *ArrayList([:0]u8), s: []const u8) !void {
-        const item = try std.mem.dupeZ(array.allocator, u8, s);
+        _ = self;
+        const item = try array.allocator.dupeZ(u8, s);
         errdefer array.allocator.free(item);
         try array.append(item);
     }
@@ -171,11 +216,6 @@ pub const NativeTargetInfo = struct {
     target: Target,
 
     dynamic_linker: DynamicLinker = DynamicLinker{},
-
-    /// Only some architectures have CPU detection implemented. This field reveals whether
-    /// CPU detection actually occurred. When this is `true` it means that the reported
-    /// CPU is baseline only because of a missing implementation for that architecture.
-    cpu_detection_unimplemented: bool = false,
 
     pub const DynamicLinker = Target.DynamicLinker;
 
@@ -187,6 +227,7 @@ pub const NativeTargetInfo = struct {
         ProcessFdQuotaExceeded,
         SystemFdQuotaExceeded,
         DeviceBusy,
+        OSVersionDetectionFail,
     };
 
     /// Given a `CrossTarget`, which specifies in detail which parts of the target should be detected
@@ -197,20 +238,15 @@ pub const NativeTargetInfo = struct {
     /// deinitialization method.
     /// TODO Remove the Allocator requirement from this function.
     pub fn detect(allocator: *Allocator, cross_target: CrossTarget) DetectError!NativeTargetInfo {
-        var os = Target.Os.defaultVersionRange(cross_target.getOsTag());
+        var os = cross_target.getOsTag().defaultVersionRange();
         if (cross_target.os_tag == null) {
-            switch (Target.current.os.tag) {
+            switch (builtin.target.os.tag) {
                 .linux => {
                     const uts = std.os.uname();
                     const release = mem.spanZ(&uts.release);
-                    // The release field may have several other fields after the
-                    // kernel version
-                    const kernel_version = if (mem.indexOfScalar(u8, release, '-')) |pos|
-                        release[0..pos]
-                    else
-                        release;
-
-                    if (std.builtin.Version.parse(kernel_version)) |ver| {
+                    // The release field sometimes has a weird format,
+                    // `Version.parse` will attempt to find some meaningful interpretation.
+                    if (std.builtin.Version.parse(release)) |ver| {
                         os.version_range.linux.range.min = ver;
                         os.version_range.linux.range.max = ver;
                     } else |err| switch (err) {
@@ -219,81 +255,104 @@ pub const NativeTargetInfo = struct {
                         error.InvalidVersion => {},
                     }
                 },
+                .solaris => {
+                    const uts = std.os.uname();
+                    const release = mem.spanZ(&uts.release);
+                    if (std.builtin.Version.parse(release)) |ver| {
+                        os.version_range.semver.min = ver;
+                        os.version_range.semver.max = ver;
+                    } else |err| switch (err) {
+                        error.Overflow => {},
+                        error.InvalidCharacter => {},
+                        error.InvalidVersion => {},
+                    }
+                },
                 .windows => {
-                    var version_info: std.os.windows.RTL_OSVERSIONINFOW = undefined;
-                    version_info.dwOSVersionInfoSize = @sizeOf(@TypeOf(version_info));
+                    const detected_version = windows.detectRuntimeVersion();
+                    os.version_range.windows.min = detected_version;
+                    os.version_range.windows.max = detected_version;
+                },
+                .macos => try darwin.macos.detect(&os),
+                .freebsd, .netbsd, .dragonfly => {
+                    const key = switch (builtin.target.os.tag) {
+                        .freebsd => "kern.osreldate",
+                        .netbsd, .dragonfly => "kern.osrevision",
+                        else => unreachable,
+                    };
+                    var value: u32 = undefined;
+                    var len: usize = @sizeOf(@TypeOf(value));
 
-                    switch (std.os.windows.ntdll.RtlGetVersion(&version_info)) {
-                        .SUCCESS => {},
+                    std.os.sysctlbynameZ(key, &value, &len, null, 0) catch |err| switch (err) {
+                        error.NameTooLong => unreachable, // constant, known good value
+                        error.PermissionDenied => unreachable, // only when setting values,
+                        error.SystemResources => unreachable, // memory already on the stack
+                        error.UnknownName => unreachable, // constant, known good value
+                        error.Unexpected => return error.OSVersionDetectionFail,
+                    };
+
+                    switch (builtin.target.os.tag) {
+                        .freebsd => {
+                            // https://www.freebsd.org/doc/en_US.ISO8859-1/books/porters-handbook/versions.html
+                            // Major * 100,000 has been convention since FreeBSD 2.2 (1997)
+                            // Minor * 1(0),000 summed has been convention since FreeBSD 2.2 (1997)
+                            // e.g. 492101 = 4.11-STABLE = 4.(9+2)
+                            const major = value / 100_000;
+                            const minor1 = value % 100_000 / 10_000; // usually 0 since 5.1
+                            const minor2 = value % 10_000 / 1_000; // 0 before 5.1, minor version since
+                            const patch = value % 1_000;
+                            os.version_range.semver.min = .{ .major = major, .minor = minor1 + minor2, .patch = patch };
+                            os.version_range.semver.max = os.version_range.semver.min;
+                        },
+                        .netbsd => {
+                            // #define __NetBSD_Version__ MMmmrrpp00
+                            //
+                            // M = major version
+                            // m = minor version; a minor number of 99 indicates current.
+                            // r = 0 (*)
+                            // p = patchlevel
+                            const major = value / 100_000_000;
+                            const minor = value % 100_000_000 / 1_000_000;
+                            const patch = value % 10_000 / 100;
+                            os.version_range.semver.min = .{ .major = major, .minor = minor, .patch = patch };
+                            os.version_range.semver.max = os.version_range.semver.min;
+                        },
+                        .dragonfly => {
+                            // https://github.com/DragonFlyBSD/DragonFlyBSD/blob/cb2cde83771754aeef9bb3251ee48959138dec87/Makefile.inc1#L15-L17
+                            // flat base10 format: Mmmmpp
+                            //   M = major
+                            //   m = minor; odd-numbers indicate current dev branch
+                            //   p = patch
+                            const major = value / 100_000;
+                            const minor = value % 100_000 / 100;
+                            const patch = value % 100;
+                            os.version_range.semver.min = .{ .major = major, .minor = minor, .patch = patch };
+                            os.version_range.semver.max = os.version_range.semver.min;
+                        },
                         else => unreachable,
                     }
-
-                    // Starting from the system infos build a NTDDI-like version
-                    // constant whose format is:
-                    //   B0 B1 B2 B3
-                    //   `---` `` ``--> Sub-version (Starting from Windows 10 onwards)
-                    //     \    `--> Service pack (Always zero in the constants defined)
-                    //      `--> OS version (Major & minor)
-                    const os_ver: u16 = //
-                        @intCast(u16, version_info.dwMajorVersion & 0xff) << 8 |
-                        @intCast(u16, version_info.dwMinorVersion & 0xff);
-                    const sp_ver: u8 = 0;
-                    const sub_ver: u8 = if (os_ver >= 0x0A00) subver: {
-                        // There's no other way to obtain this info beside
-                        // checking the build number against a known set of
-                        // values
-                        const known_build_numbers = [_]u32{
-                            10240, 10586, 14393, 15063, 16299, 17134, 17763,
-                            18362, 18363,
-                        };
-                        var last_idx: usize = 0;
-                        for (known_build_numbers) |build, i| {
-                            if (version_info.dwBuildNumber >= build)
-                                last_idx = i;
-                        }
-                        break :subver @truncate(u8, last_idx);
-                    } else 0;
-
-                    const version: u32 = @as(u32, os_ver) << 16 | @as(u32, sp_ver) << 8 | sub_ver;
-
-                    os.version_range.windows.max = @intToEnum(Target.Os.WindowsVersion, version);
-                    os.version_range.windows.min = @intToEnum(Target.Os.WindowsVersion, version);
                 },
-                .macosx => {
-                    var scbuf: [32]u8 = undefined;
-                    var size: usize = undefined;
+                .openbsd => {
+                    const mib: [2]c_int = [_]c_int{
+                        std.os.CTL.KERN,
+                        std.os.KERN.OSRELEASE,
+                    };
+                    var buf: [64]u8 = undefined;
+                    var len: usize = buf.len;
 
-                    // The osproductversion sysctl was introduced first with 10.13.4 High Sierra.
-                    const key_osproductversion = "kern.osproductversion"; // eg. "10.15.4"
-                    size = scbuf.len;
-                    if (std.os.sysctlbynameZ(key_osproductversion, &scbuf, &size, null, 0)) |_| {
-                        const string_version = scbuf[0 .. size - 1];
-                        if (std.builtin.Version.parse(string_version)) |ver| {
-                            os.version_range.semver.min = ver;
-                            os.version_range.semver.max = ver;
-                        } else |err| switch (err) {
-                            error.Overflow => {},
-                            error.InvalidCharacter => {},
-                            error.InvalidVersion => {},
-                        }
-                    } else |err| switch (err) {
-                        error.UnknownName => {
-                            const key_osversion = "kern.osversion"; // eg. "19E287"
-                            size = scbuf.len;
-                            std.os.sysctlbynameZ(key_osversion, &scbuf, &size, null, 0) catch {
-                                @panic("unable to detect macOS version: " ++ key_osversion);
-                            };
-                            if (macos.version_from_build(scbuf[0 .. size - 1])) |ver| {
-                                os.version_range.semver.min = ver;
-                                os.version_range.semver.max = ver;
-                            } else |_| {}
-                        },
-                        else => @panic("unable to detect macOS version: " ++ key_osproductversion),
+                    std.os.sysctl(&mib, &buf, &len, null, 0) catch |err| switch (err) {
+                        error.NameTooLong => unreachable, // constant, known good value
+                        error.PermissionDenied => unreachable, // only when setting values,
+                        error.SystemResources => unreachable, // memory already on the stack
+                        error.UnknownName => unreachable, // constant, known good value
+                        error.Unexpected => return error.OSVersionDetectionFail,
+                    };
+
+                    if (std.builtin.Version.parse(buf[0 .. len - 1])) |ver| {
+                        os.version_range.semver.min = ver;
+                        os.version_range.semver.max = ver;
+                    } else |_| {
+                        return error.OSVersionDetectionFail;
                     }
-                },
-                .freebsd => {
-                    // Unimplemented, fall back to default.
-                    // https://github.com/ziglang/zig/issues/4582
                 },
                 else => {
                     // Unimplemented, fall back to default version range.
@@ -324,8 +383,6 @@ pub const NativeTargetInfo = struct {
             os.version_range.linux.glibc = glibc;
         }
 
-        var cpu_detection_unimplemented = false;
-
         // Until https://github.com/ziglang/zig/issues/4592 is implemented (support detecting the
         // native CPU architecture as being different than the current target), we use this:
         const cpu_arch = cross_target.getCpuArch();
@@ -339,14 +396,43 @@ pub const NativeTargetInfo = struct {
                 Target.Cpu.baseline(cpu_arch),
             .explicit => |model| model.toCpu(cpu_arch),
         } orelse backup_cpu_detection: {
-            cpu_detection_unimplemented = true;
             break :backup_cpu_detection Target.Cpu.baseline(cpu_arch);
         };
-        cross_target.updateCpuFeatures(&cpu.features);
-
-        var target = try detectAbiAndDynamicLinker(allocator, cpu, os, cross_target);
-        target.cpu_detection_unimplemented = cpu_detection_unimplemented;
-        return target;
+        var result = try detectAbiAndDynamicLinker(allocator, cpu, os, cross_target);
+        // For x86, we need to populate some CPU feature flags depending on architecture
+        // and mode:
+        //  * 16bit_mode => if the abi is code16
+        //  * 32bit_mode => if the arch is i386
+        // However, the "mode" flags can be used as overrides, so if the user explicitly
+        // sets one of them, that takes precedence.
+        switch (cpu_arch) {
+            .i386 => {
+                if (!std.Target.x86.featureSetHasAny(cross_target.cpu_features_add, .{
+                    .@"16bit_mode", .@"32bit_mode",
+                })) {
+                    switch (result.target.abi) {
+                        .code16 => result.target.cpu.features.addFeature(
+                            @enumToInt(std.Target.x86.Feature.@"16bit_mode"),
+                        ),
+                        else => result.target.cpu.features.addFeature(
+                            @enumToInt(std.Target.x86.Feature.@"32bit_mode"),
+                        ),
+                    }
+                }
+            },
+            .arm, .armeb => {
+                // XXX What do we do if the target has the noarm feature?
+                //     What do we do if the user specifies +thumb_mode?
+            },
+            .thumb, .thumbeb => {
+                result.target.cpu.features.addFeature(
+                    @enumToInt(std.Target.arm.Feature.thumb_mode),
+                );
+            },
+            else => {},
+        }
+        cross_target.updateCpuFeatures(&result.target.cpu.features);
+        return result;
     }
 
     /// First we attempt to use the executable's own binary. If it is dynamically
@@ -360,19 +446,25 @@ pub const NativeTargetInfo = struct {
         os: Target.Os,
         cross_target: CrossTarget,
     ) DetectError!NativeTargetInfo {
-        const native_target_has_ld = comptime Target.current.hasDynamicLinker();
-        const is_linux = Target.current.os.tag == .linux;
+        const native_target_has_ld = comptime builtin.target.hasDynamicLinker();
+        const is_linux = builtin.target.os.tag == .linux;
         const have_all_info = cross_target.dynamic_linker.get() != null and
             cross_target.abi != null and (!is_linux or cross_target.abi.?.isGnu());
         const os_is_non_native = cross_target.os_tag != null;
         if (!native_target_has_ld or have_all_info or os_is_non_native) {
             return defaultAbiAndDynamicLinker(cpu, os, cross_target);
         }
+        if (cross_target.abi) |abi| {
+            if (abi.isMusl()) {
+                // musl implies static linking.
+                return defaultAbiAndDynamicLinker(cpu, os, cross_target);
+            }
+        }
         // The current target's ABI cannot be relied on for this. For example, we may build the zig
         // compiler for target riscv64-linux-musl and provide a tarball for users to download.
         // A user could then run that zig compiler on riscv64-linux-gnu. This use case is well-defined
         // and supported by Zig. But that means that we must detect the system ABI here rather than
-        // relying on `Target.current`.
+        // relying on `builtin.target`.
         const all_abis = comptime blk: {
             assert(@enumToInt(Target.Abi.none) == 0);
             const fields = std.meta.fields(Target.Abi)[1..];
@@ -404,13 +496,6 @@ pub const NativeTargetInfo = struct {
         }
         const ld_info_list = ld_info_list_buffer[0..ld_info_list_len];
 
-        if (cross_target.dynamic_linker.get()) |explicit_ld| {
-            const explicit_ld_basename = fs.path.basename(explicit_ld);
-            for (ld_info_list) |ld_info| {
-                const standard_ld_basename = fs.path.basename(ld_info.ld.get().?);
-            }
-        }
-
         // Best case scenario: the executable is dynamically linked, and we can iterate
         // over our own shared objects and find a dynamic linker.
         self_exe: {
@@ -440,7 +525,7 @@ pub const NativeTargetInfo = struct {
 
             // Look for glibc version.
             var os_adjusted = os;
-            if (Target.current.os.tag == .linux and found_ld_info.abi.isGnu() and
+            if (builtin.target.os.tag == .linux and found_ld_info.abi.isGnu() and
                 cross_target.glibc_version == null)
             {
                 for (lib_paths) |lib_path| {
@@ -533,6 +618,9 @@ pub const NativeTargetInfo = struct {
             error.SystemResources => return error.SystemResources,
             error.NotDir => return error.GnuLibCVersionUnavailable,
             error.Unexpected => return error.GnuLibCVersionUnavailable,
+            error.InvalidUtf8 => unreachable, // Windows only
+            error.BadPathName => unreachable, // Windows only
+            error.UnsupportedReparsePointType => unreachable, // Windows only
         };
         return glibcVerFromLinkName(link_name);
     }
@@ -588,7 +676,7 @@ pub const NativeTargetInfo = struct {
             elf.ELFDATA2MSB => .Big,
             else => return error.InvalidElfEndian,
         };
-        const need_bswap = elf_endian != std.builtin.endian;
+        const need_bswap = elf_endian != native_endian;
         if (hdr32.e_ident[elf.EI_VERSION] != 1) return error.InvalidElfVersion;
 
         const is_64 = switch (hdr32.e_ident[elf.EI_CLASS]) {
@@ -653,7 +741,7 @@ pub const NativeTargetInfo = struct {
                         }
                     },
                     // We only need this for detecting glibc version.
-                    elf.PT_DYNAMIC => if (Target.current.os.tag == .linux and result.target.isGnuLibC() and
+                    elf.PT_DYNAMIC => if (builtin.target.os.tag == .linux and result.target.isGnuLibC() and
                         cross_target.glibc_version == null)
                     {
                         var dyn_off = elfInt(is_64, need_bswap, ph32.p_offset, ph64.p_offset);
@@ -700,7 +788,7 @@ pub const NativeTargetInfo = struct {
             }
         }
 
-        if (Target.current.os.tag == .linux and result.target.isGnuLibC() and cross_target.glibc_version == null) {
+        if (builtin.target.os.tag == .linux and result.target.isGnuLibC() and cross_target.glibc_version == null) {
             if (rpath_offset) |rpoff| {
                 const shstrndx = elfInt(is_64, need_bswap, hdr32.e_shstrndx, hdr64.e_shstrndx);
 
@@ -749,7 +837,7 @@ pub const NativeTargetInfo = struct {
                         );
                         const sh_name_off = elfInt(is_64, need_bswap, sh32.sh_name, sh64.sh_name);
                         // TODO this pointer cast should not be necessary
-                        const sh_name = mem.spanZ(@ptrCast([*:0]u8, shstrtab[sh_name_off..].ptr));
+                        const sh_name = mem.spanZ(std.meta.assumeSentinel(shstrtab[sh_name_off..].ptr, 0));
                         if (mem.eql(u8, sh_name, ".dynstr")) {
                             break :find_dyn_str .{
                                 .offset = elfInt(is_64, need_bswap, sh32.sh_offset, sh64.sh_offset),
@@ -761,14 +849,14 @@ pub const NativeTargetInfo = struct {
 
                 if (dynstr) |ds| {
                     const strtab_len = std.math.min(ds.size, strtab_buf.len);
-                    const strtab_read_len = try preadMin(file, &strtab_buf, ds.offset, shstrtab_len);
+                    const strtab_read_len = try preadMin(file, &strtab_buf, ds.offset, strtab_len);
                     const strtab = strtab_buf[0..strtab_read_len];
                     // TODO this pointer cast should not be necessary
                     const rpoff_usize = std.math.cast(usize, rpoff) catch |err| switch (err) {
                         error.Overflow => return error.InvalidElfFile,
                     };
-                    const rpath_list = mem.spanZ(@ptrCast([*:0]u8, strtab[rpoff_usize..].ptr));
-                    var it = mem.tokenize(rpath_list, ":");
+                    const rpath_list = mem.spanZ(std.meta.assumeSentinel(strtab[rpoff_usize..].ptr, 0));
+                    var it = mem.tokenize(u8, rpath_list, ":");
                     while (it.next()) |rpath| {
                         var dir = fs.cwd().openDir(rpath, .{}) catch |err| switch (err) {
                             error.NameTooLong => unreachable,
@@ -798,6 +886,9 @@ pub const NativeTargetInfo = struct {
                             &link_buf,
                         ) catch |err| switch (err) {
                             error.NameTooLong => unreachable,
+                            error.InvalidUtf8 => unreachable, // Windows only
+                            error.BadPathName => unreachable, // Windows only
+                            error.UnsupportedReparsePointType => unreachable, // Windows only
 
                             error.AccessDenied,
                             error.FileNotFound,
@@ -832,6 +923,7 @@ pub const NativeTargetInfo = struct {
             const len = file.pread(buf[i .. buf.len - i], offset + i) catch |err| switch (err) {
                 error.OperationAborted => unreachable, // Windows-only
                 error.WouldBlock => unreachable, // Did not request blocking mode
+                error.NotOpenForReading => unreachable,
                 error.SystemResources => return error.SystemResources,
                 error.IsDir => return error.UnableToReadElfFile,
                 error.BrokenPipe => return error.UnableToReadElfFile,
@@ -840,6 +932,7 @@ pub const NativeTargetInfo = struct {
                 error.ConnectionTimedOut => return error.UnableToReadElfFile,
                 error.Unexpected => return error.Unexpected,
                 error.InputOutput => return error.FileSystem,
+                error.AccessDenied => return error.Unexpected,
             };
             if (len == 0) return error.UnexpectedEndOfFile;
             i += len;
@@ -867,7 +960,7 @@ pub const NativeTargetInfo = struct {
         abi: Target.Abi,
     };
 
-    pub fn elfInt(is_64: bool, need_bswap: bool, int_32: var, int_64: var) @TypeOf(int_64) {
+    pub fn elfInt(is_64: bool, need_bswap: bool, int_32: anytype, int_64: anytype) @TypeOf(int_64) {
         if (is_64) {
             if (need_bswap) {
                 return @byteSwap(@TypeOf(int_64), int_64);
@@ -887,19 +980,26 @@ pub const NativeTargetInfo = struct {
         // Here we switch on a comptime value rather than `cpu_arch`. This is valid because `cpu_arch`,
         // although it is a runtime value, is guaranteed to be one of the architectures in the set
         // of the respective switch prong.
-        switch (std.Target.current.cpu.arch) {
+        switch (builtin.cpu.arch) {
             .x86_64, .i386 => {
                 return @import("system/x86.zig").detectNativeCpuAndFeatures(cpu_arch, os, cross_target);
             },
-            else => {
-                // This architecture does not have CPU model & feature detection yet.
-                // See https://github.com/ziglang/zig/issues/4591
-                return null;
-            },
+            else => {},
         }
+
+        switch (builtin.os.tag) {
+            .linux => return linux.detectNativeCpuAndFeatures(),
+            .macos => return darwin.macos.detectNativeCpuAndFeatures(),
+            else => {},
+        }
+
+        // This architecture does not have CPU model & feature detection yet.
+        // See https://github.com/ziglang/zig/issues/4591
+        return null;
     }
 };
 
-test "" {
-    _ = @import("system/macos.zig");
+test {
+    _ = @import("system/darwin.zig");
+    _ = @import("system/linux.zig");
 }

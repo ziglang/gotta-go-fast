@@ -1,9 +1,13 @@
 const std = @import("std");
 const bench = @import("root");
 
-pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {}
+pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {
+    _ = gpa;
+    _ = options;
+}
 
 pub fn run(gpa: *std.mem.Allocator, context: void) !void {
+    _ = context;
     // Benchmarks ported from https://github.com/martinus/map_benchmark
     const lower32bit = 0x00000000FFFFFFFF;
     const upper32bit = 0xFFFFFFFF00000000;
@@ -23,7 +27,6 @@ pub fn run(gpa: *std.mem.Allocator, context: void) !void {
 
 fn randomFind(gpa: *std.mem.Allocator, num_rand: u32, mask: u64, num_insert: u64, find_per_insert: u64, expected: u64) void {
     const total = 4;
-    const sequential = total - num_rand;
 
     const find_per_iter = find_per_insert * total;
 
@@ -44,7 +47,7 @@ fn randomFind(gpa: *std.mem.Allocator, num_rand: u32, mask: u64, num_insert: u64
 
         while (i < num_insert) {
             // insert NumTotal entries: some random, some sequential.
-            std.rand.Random.shuffle(&rng.random, bool, insert_random[0..]);
+            std.rand.Random.shuffle(rng.random(), bool, insert_random[0..]);
             for (insert_random) |isRandomToInsert| {
                 const val = other_rng.next();
                 if (isRandomToInsert) {
@@ -75,24 +78,27 @@ fn randomFind(gpa: *std.mem.Allocator, num_rand: u32, mask: u64, num_insert: u64
 // slower than just calling next() and these benchmarks only require getting
 // consecutive u64's.
 pub const Sfc64 = struct {
-    random: std.rand.Random,
-
     a: u64 = undefined,
     b: u64 = undefined,
     c: u64 = undefined,
     counter: u64 = undefined,
+
+    const Random = std.rand.Random;
+    const math = std.math;
 
     const Rotation = 24;
     const RightShift = 11;
     const LeftShift = 3;
 
     pub fn init(init_s: u64) Sfc64 {
-        var x = Sfc64{
-            .random = std.rand.Random{ .fillFn = fill },
-        };
+        var x = Sfc64{};
 
         x.seed(init_s);
         return x;
+    }
+
+    pub fn random(self: *Sfc64) Random {
+        return Random.init(self, fill);
     }
 
     pub fn next(self: *Sfc64) u64 {
@@ -100,11 +106,11 @@ pub const Sfc64 = struct {
         self.counter += 1;
         self.a = self.b ^ (self.b >> RightShift);
         self.b = self.c +% (self.c << LeftShift);
-        self.c = std.math.rotl(u64, self.c, Rotation) +% tmp;
+        self.c = math.rotl(u64, self.c, Rotation) +% tmp;
         return tmp;
     }
 
-    pub fn seed(self: *Sfc64, init_s: u64) void {
+    fn seed(self: *Sfc64, init_s: u64) void {
         self.a = init_s;
         self.b = init_s;
         self.c = init_s;
@@ -115,9 +121,7 @@ pub const Sfc64 = struct {
         }
     }
 
-    fn fill(r: *std.rand.Random, buf: []u8) void {
-        const self = @fieldParentPtr(Sfc64, "random", r);
-
+    pub fn fill(self: *Sfc64, buf: []u8) void {
         var i: usize = 0;
         const aligned_len = buf.len - (buf.len & 7);
 

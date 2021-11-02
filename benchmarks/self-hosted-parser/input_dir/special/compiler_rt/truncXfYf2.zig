@@ -8,12 +8,21 @@ pub fn __truncdfhf2(a: f64) callconv(.C) u16 {
     return @bitCast(u16, @call(.{ .modifier = .always_inline }, truncXfYf2, .{ f16, f64, a }));
 }
 
+pub fn __trunctfhf2(a: f128) callconv(.C) u16 {
+    return @bitCast(u16, @call(.{ .modifier = .always_inline }, truncXfYf2, .{ f16, f128, a }));
+}
+
 pub fn __trunctfsf2(a: f128) callconv(.C) f32 {
     return @call(.{ .modifier = .always_inline }, truncXfYf2, .{ f32, f128, a });
 }
 
 pub fn __trunctfdf2(a: f128) callconv(.C) f64 {
     return @call(.{ .modifier = .always_inline }, truncXfYf2, .{ f64, f128, a });
+}
+
+pub fn __trunctfxf2(a: f128) callconv(.C) c_longdouble {
+    _ = a;
+    @panic("TODO implement");
 }
 
 pub fn __truncdfsf2(a: f64) callconv(.C) f32 {
@@ -36,16 +45,15 @@ pub fn __aeabi_f2h(a: f32) callconv(.AAPCS) u16 {
 }
 
 fn truncXfYf2(comptime dst_t: type, comptime src_t: type, a: src_t) dst_t {
-    const src_rep_t = std.meta.Int(false, @typeInfo(src_t).Float.bits);
-    const dst_rep_t = std.meta.Int(false, @typeInfo(dst_t).Float.bits);
+    const src_rep_t = std.meta.Int(.unsigned, @typeInfo(src_t).Float.bits);
+    const dst_rep_t = std.meta.Int(.unsigned, @typeInfo(dst_t).Float.bits);
     const srcSigBits = std.math.floatMantissaBits(src_t);
     const dstSigBits = std.math.floatMantissaBits(dst_t);
     const SrcShift = std.math.Log2Int(src_rep_t);
-    const DstShift = std.math.Log2Int(dst_rep_t);
 
     // Various constants whose values follow from the type parameters.
     // Any reasonable optimizer will fold and propagate all of these.
-    const srcBits = src_t.bit_count;
+    const srcBits = @typeInfo(src_t).Float.bits;
     const srcExpBits = srcBits - srcSigBits - 1;
     const srcInfExp = (1 << srcExpBits) - 1;
     const srcExpBias = srcInfExp >> 1;
@@ -60,7 +68,7 @@ fn truncXfYf2(comptime dst_t: type, comptime src_t: type, a: src_t) dst_t {
     const srcQNaN = 1 << (srcSigBits - 1);
     const srcNaNCode = srcQNaN - 1;
 
-    const dstBits = dst_t.bit_count;
+    const dstBits = @typeInfo(dst_t).Float.bits;
     const dstExpBits = dstBits - dstSigBits - 1;
     const dstInfExp = (1 << dstExpBits) - 1;
     const dstExpBias = dstInfExp >> 1;
@@ -117,7 +125,7 @@ fn truncXfYf2(comptime dst_t: type, comptime src_t: type, a: src_t) dst_t {
         if (shift > srcSigBits) {
             absResult = 0;
         } else {
-            const sticky: src_rep_t = significand << @intCast(SrcShift, srcBits - shift);
+            const sticky: src_rep_t = @boolToInt(significand << @intCast(SrcShift, srcBits - shift) != 0);
             const denormalizedSignificand: src_rep_t = significand >> @intCast(SrcShift, shift) | sticky;
             absResult = @intCast(dst_rep_t, denormalizedSignificand >> (srcSigBits - dstSigBits));
             const roundBits: src_rep_t = denormalizedSignificand & roundMask;
@@ -135,6 +143,6 @@ fn truncXfYf2(comptime dst_t: type, comptime src_t: type, a: src_t) dst_t {
     return @bitCast(dst_t, result);
 }
 
-test "import truncXfYf2" {
+test {
     _ = @import("truncXfYf2_test.zig");
 }

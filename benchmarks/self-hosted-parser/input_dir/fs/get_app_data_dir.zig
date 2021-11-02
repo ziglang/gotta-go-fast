@@ -37,25 +37,39 @@ pub fn getAppDataDir(allocator: *mem.Allocator, appname: []const u8) GetAppDataD
                 else => return error.AppDataDirUnavailable,
             }
         },
-        .macosx => {
+        .macos => {
             const home_dir = os.getenv("HOME") orelse {
                 // TODO look in /etc/passwd
                 return error.AppDataDirUnavailable;
             };
             return fs.path.join(allocator, &[_][]const u8{ home_dir, "Library", "Application Support", appname });
         },
-        .linux, .freebsd, .netbsd, .dragonfly => {
+        .linux, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris => {
             const home_dir = os.getenv("HOME") orelse {
                 // TODO look in /etc/passwd
                 return error.AppDataDirUnavailable;
             };
             return fs.path.join(allocator, &[_][]const u8{ home_dir, ".local", "share", appname });
         },
+        .haiku => {
+            var dir_path_ptr: [*:0]u8 = undefined;
+            // TODO look into directory_which
+            const be_user_settings = 0xbbe;
+            const rc = os.system.find_directory(be_user_settings, -1, true, dir_path_ptr, 1);
+            const settings_dir = try allocator.dupeZ(u8, mem.spanZ(dir_path_ptr));
+            defer allocator.free(settings_dir);
+            switch (rc) {
+                0 => return fs.path.join(allocator, &[_][]const u8{ settings_dir, appname }),
+                else => return error.AppDataDirUnavailable,
+            }
+        },
         else => @compileError("Unsupported OS"),
     }
 }
 
 test "getAppDataDir" {
+    if (builtin.os.tag == .wasi) return error.SkipZigTest;
+
     // We can't actually validate the result
     const dir = getAppDataDir(std.testing.allocator, "zig") catch return;
     defer std.testing.allocator.free(dir);

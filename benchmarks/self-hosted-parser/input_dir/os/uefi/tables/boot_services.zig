@@ -73,7 +73,8 @@ pub const BootServices = extern struct {
     /// Returns an array of handles that support a specified protocol.
     locateHandle: fn (LocateSearchType, ?*align(8) const Guid, ?*const c_void, *usize, [*]Handle) callconv(.C) Status,
 
-    locateDevicePath: Status, // TODO
+    /// Locates the handle to a device on the device path that supports the specified protocol
+    locateDevicePath: fn (*align(8) const Guid, **const DevicePathProtocol, *?Handle) callconv(.C) Status,
     installConfigurationTable: Status, // TODO
 
     /// Loads an EFI image into memory.
@@ -150,13 +151,13 @@ pub const BootServices = extern struct {
     pub const tpl_high_level: usize = 31;
 };
 
-pub const TimerDelay = extern enum(u32) {
+pub const TimerDelay = enum(u32) {
     TimerCancel,
     TimerPeriodic,
     TimerRelative,
 };
 
-pub const MemoryType = extern enum(u32) {
+pub const MemoryType = enum(u32) {
     ReservedMemoryType,
     LoaderCode,
     LoaderData,
@@ -173,10 +174,12 @@ pub const MemoryType = extern enum(u32) {
     PalCode,
     PersistentMemory,
     MaxMemoryType,
+    _,
 };
 
 pub const MemoryDescriptor = extern struct {
     type: MemoryType,
+    padding: u32,
     physical_start: u64,
     virtual_start: u64,
     number_of_pages: usize,
@@ -186,7 +189,8 @@ pub const MemoryDescriptor = extern struct {
         wt: bool,
         wb: bool,
         uce: bool,
-        _pad1: u7,
+        _pad1: u3,
+        _pad2: u4,
         wp: bool,
         rp: bool,
         xp: bool,
@@ -195,12 +199,14 @@ pub const MemoryDescriptor = extern struct {
         ro: bool,
         sp: bool,
         cpu_crypto: bool,
-        _pad2: u43,
+        _pad3: u4,
+        _pad4: u32,
+        _pad5: u7,
         memory_runtime: bool,
     },
 };
 
-pub const LocateSearchType = extern enum(u32) {
+pub const LocateSearchType = enum(u32) {
     AllHandles,
     ByRegisterNotify,
     ByProtocol,
@@ -213,7 +219,9 @@ pub const OpenProtocolAttributes = packed struct {
     by_child_controller: bool = false,
     by_driver: bool = false,
     exclusive: bool = false,
-    _pad: u26 = undefined,
+    _pad1: u2 = undefined,
+    _pad2: u8 = undefined,
+    _pad3: u16 = undefined,
 };
 
 pub const ProtocolInformationEntry = extern struct {
@@ -223,7 +231,7 @@ pub const ProtocolInformationEntry = extern struct {
     open_count: u32,
 };
 
-pub const AllocateType = extern enum(u32) {
+pub const AllocateType = enum(u32) {
     AllocateAnyPages,
     AllocateMaxAddress,
     AllocateAddress,

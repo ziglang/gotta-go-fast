@@ -1,15 +1,16 @@
 const std = @import("std");
-const builtin = std.builtin;
 const Log2Int = std.math.Log2Int;
+const native_endian = @import("builtin").cpu.arch.endian();
 
 fn Dwords(comptime T: type, comptime signed_half: bool) type {
     return extern union {
-        pub const HalfTU = std.meta.Int(false, @divExact(T.bit_count, 2));
-        pub const HalfTS = std.meta.Int(true, @divExact(T.bit_count, 2));
+        pub const bits = @divExact(@typeInfo(T).Int.bits, 2);
+        pub const HalfTU = std.meta.Int(.unsigned, bits);
+        pub const HalfTS = std.meta.Int(.signed, bits);
         pub const HalfT = if (signed_half) HalfTS else HalfTU;
 
         all: T,
-        s: if (builtin.endian == .Little)
+        s: if (native_endian == .Little)
             struct { low: HalfT, high: HalfT }
         else
             struct { high: HalfT, low: HalfT },
@@ -25,15 +26,15 @@ pub fn ashlXi3(comptime T: type, a: T, b: i32) T {
     const input = dwords{ .all = a };
     var output: dwords = undefined;
 
-    if (b >= dwords.HalfT.bit_count) {
+    if (b >= dwords.bits) {
         output.s.low = 0;
-        output.s.high = input.s.low << @intCast(S, b - dwords.HalfT.bit_count);
+        output.s.high = input.s.low << @intCast(S, b - dwords.bits);
     } else if (b == 0) {
         return a;
     } else {
         output.s.low = input.s.low << @intCast(S, b);
         output.s.high = input.s.high << @intCast(S, b);
-        output.s.high |= input.s.low >> @intCast(S, dwords.HalfT.bit_count - b);
+        output.s.high |= input.s.low >> @intCast(S, dwords.bits - b);
     }
 
     return output.all;
@@ -48,14 +49,14 @@ pub fn ashrXi3(comptime T: type, a: T, b: i32) T {
     const input = dwords{ .all = a };
     var output: dwords = undefined;
 
-    if (b >= dwords.HalfT.bit_count) {
-        output.s.high = input.s.high >> (dwords.HalfT.bit_count - 1);
-        output.s.low = input.s.high >> @intCast(S, b - dwords.HalfT.bit_count);
+    if (b >= dwords.bits) {
+        output.s.high = input.s.high >> (dwords.bits - 1);
+        output.s.low = input.s.high >> @intCast(S, b - dwords.bits);
     } else if (b == 0) {
         return a;
     } else {
         output.s.high = input.s.high >> @intCast(S, b);
-        output.s.low = input.s.high << @intCast(S, dwords.HalfT.bit_count - b);
+        output.s.low = input.s.high << @intCast(S, dwords.bits - b);
         // Avoid sign-extension here
         output.s.low |= @bitCast(
             dwords.HalfT,
@@ -75,14 +76,14 @@ pub fn lshrXi3(comptime T: type, a: T, b: i32) T {
     const input = dwords{ .all = a };
     var output: dwords = undefined;
 
-    if (b >= dwords.HalfT.bit_count) {
+    if (b >= dwords.bits) {
         output.s.high = 0;
-        output.s.low = input.s.high >> @intCast(S, b - dwords.HalfT.bit_count);
+        output.s.low = input.s.high >> @intCast(S, b - dwords.bits);
     } else if (b == 0) {
         return a;
     } else {
         output.s.high = input.s.high >> @intCast(S, b);
-        output.s.low = input.s.high << @intCast(S, dwords.HalfT.bit_count - b);
+        output.s.low = input.s.high << @intCast(S, dwords.bits - b);
         output.s.low |= input.s.low >> @intCast(S, b);
     }
 
@@ -118,7 +119,7 @@ pub fn __aeabi_llsr(a: i64, b: i32) callconv(.AAPCS) i64 {
     return __lshrdi3(a, b);
 }
 
-test "" {
+test {
     _ = @import("ashrdi3_test.zig");
     _ = @import("ashrti3_test.zig");
 

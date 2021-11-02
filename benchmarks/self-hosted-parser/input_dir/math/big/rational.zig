@@ -43,7 +43,7 @@ pub const Rational = struct {
     }
 
     /// Set a Rational from a primitive integer type.
-    pub fn setInt(self: *Rational, a: var) !void {
+    pub fn setInt(self: *Rational, a: anytype) !void {
         try self.p.set(a);
         try self.q.set(1);
     }
@@ -105,6 +105,7 @@ pub const Rational = struct {
 
             var j: usize = start;
             while (j < str.len - i - 1) : (j += 1) {
+                try self.p.ensureMulCapacity(self.p.toConst(), base);
                 try self.p.mul(self.p.toConst(), base);
             }
 
@@ -130,7 +131,7 @@ pub const Rational = struct {
         // Translated from golang.go/src/math/big/rat.go.
         debug.assert(@typeInfo(T) == .Float);
 
-        const UnsignedInt = std.meta.Int(false, T.bit_count);
+        const UnsignedInt = std.meta.Int(.unsigned, @typeInfo(T).Float.bits);
         const f_bits = @bitCast(UnsignedInt, f);
 
         const exponent_bits = math.floatExponentBits(T);
@@ -188,8 +189,8 @@ pub const Rational = struct {
         // TODO: Indicate whether the result is not exact.
         debug.assert(@typeInfo(T) == .Float);
 
-        const fsize = T.bit_count;
-        const BitReprType = std.meta.Int(false, T.bit_count);
+        const fsize = @typeInfo(T).Float.bits;
+        const BitReprType = std.meta.Int(.unsigned, fsize);
 
         const msize = math.floatMantissaBits(T);
         const msize1 = msize + 1;
@@ -198,7 +199,6 @@ pub const Rational = struct {
         const esize = math.floatExponentBits(T);
         const ebias = (1 << (esize - 1)) - 1;
         const emin = 1 - ebias;
-        const emax = ebias;
 
         if (self.p.eqZero()) {
             return 0;
@@ -280,7 +280,7 @@ pub const Rational = struct {
     }
 
     /// Set a rational from an integer ratio.
-    pub fn setRatio(self: *Rational, p: var, q: var) !void {
+    pub fn setRatio(self: *Rational, p: anytype, q: anytype) !void {
         try self.p.set(p);
         try self.q.set(q);
 
@@ -467,18 +467,20 @@ pub const Rational = struct {
 };
 
 fn extractLowBits(a: Int, comptime T: type) T {
-    testing.expect(@typeInfo(T) == .Int);
+    debug.assert(@typeInfo(T) == .Int);
 
-    if (T.bit_count <= Limb.bit_count) {
+    const t_bits = @typeInfo(T).Int.bits;
+    const limb_bits = @typeInfo(Limb).Int.bits;
+    if (t_bits <= limb_bits) {
         return @truncate(T, a.limbs[0]);
     } else {
         var r: T = 0;
         comptime var i: usize = 0;
 
-        // Remainder is always 0 since if T.bit_count >= Limb.bit_count -> Limb | T and both
+        // Remainder is always 0 since if t_bits >= limb_bits -> Limb | T and both
         // are powers of two.
-        inline while (i < T.bit_count / Limb.bit_count) : (i += 1) {
-            r |= math.shl(T, a.limbs[i], i * Limb.bit_count);
+        inline while (i < t_bits / limb_bits) : (i += 1) {
+            r |= math.shl(T, a.limbs[i], i * limb_bits);
         }
 
         return r;
@@ -490,19 +492,19 @@ test "big.rational extractLowBits" {
     defer a.deinit();
 
     const a1 = extractLowBits(a, u8);
-    testing.expect(a1 == 0x21);
+    try testing.expect(a1 == 0x21);
 
     const a2 = extractLowBits(a, u16);
-    testing.expect(a2 == 0x4321);
+    try testing.expect(a2 == 0x4321);
 
     const a3 = extractLowBits(a, u32);
-    testing.expect(a3 == 0x87654321);
+    try testing.expect(a3 == 0x87654321);
 
     const a4 = extractLowBits(a, u64);
-    testing.expect(a4 == 0x1234567887654321);
+    try testing.expect(a4 == 0x1234567887654321);
 
     const a5 = extractLowBits(a, u128);
-    testing.expect(a5 == 0x11112222333344441234567887654321);
+    try testing.expect(a5 == 0x11112222333344441234567887654321);
 }
 
 test "big.rational set" {
@@ -510,28 +512,28 @@ test "big.rational set" {
     defer a.deinit();
 
     try a.setInt(5);
-    testing.expect((try a.p.to(u32)) == 5);
-    testing.expect((try a.q.to(u32)) == 1);
+    try testing.expect((try a.p.to(u32)) == 5);
+    try testing.expect((try a.q.to(u32)) == 1);
 
     try a.setRatio(7, 3);
-    testing.expect((try a.p.to(u32)) == 7);
-    testing.expect((try a.q.to(u32)) == 3);
+    try testing.expect((try a.p.to(u32)) == 7);
+    try testing.expect((try a.q.to(u32)) == 3);
 
     try a.setRatio(9, 3);
-    testing.expect((try a.p.to(i32)) == 3);
-    testing.expect((try a.q.to(i32)) == 1);
+    try testing.expect((try a.p.to(i32)) == 3);
+    try testing.expect((try a.q.to(i32)) == 1);
 
     try a.setRatio(-9, 3);
-    testing.expect((try a.p.to(i32)) == -3);
-    testing.expect((try a.q.to(i32)) == 1);
+    try testing.expect((try a.p.to(i32)) == -3);
+    try testing.expect((try a.q.to(i32)) == 1);
 
     try a.setRatio(9, -3);
-    testing.expect((try a.p.to(i32)) == -3);
-    testing.expect((try a.q.to(i32)) == 1);
+    try testing.expect((try a.p.to(i32)) == -3);
+    try testing.expect((try a.q.to(i32)) == 1);
 
     try a.setRatio(-9, -3);
-    testing.expect((try a.p.to(i32)) == 3);
-    testing.expect((try a.q.to(i32)) == 1);
+    try testing.expect((try a.p.to(i32)) == 3);
+    try testing.expect((try a.q.to(i32)) == 1);
 }
 
 test "big.rational setFloat" {
@@ -539,24 +541,24 @@ test "big.rational setFloat" {
     defer a.deinit();
 
     try a.setFloat(f64, 2.5);
-    testing.expect((try a.p.to(i32)) == 5);
-    testing.expect((try a.q.to(i32)) == 2);
+    try testing.expect((try a.p.to(i32)) == 5);
+    try testing.expect((try a.q.to(i32)) == 2);
 
     try a.setFloat(f32, -2.5);
-    testing.expect((try a.p.to(i32)) == -5);
-    testing.expect((try a.q.to(i32)) == 2);
+    try testing.expect((try a.p.to(i32)) == -5);
+    try testing.expect((try a.q.to(i32)) == 2);
 
     try a.setFloat(f32, 3.141593);
 
     //                = 3.14159297943115234375
-    testing.expect((try a.p.to(u32)) == 3294199);
-    testing.expect((try a.q.to(u32)) == 1048576);
+    try testing.expect((try a.p.to(u32)) == 3294199);
+    try testing.expect((try a.q.to(u32)) == 1048576);
 
     try a.setFloat(f64, 72.141593120712409172417410926841290461290467124);
 
     //                = 72.1415931207124145885245525278151035308837890625
-    testing.expect((try a.p.to(u128)) == 5076513310880537);
-    testing.expect((try a.q.to(u128)) == 70368744177664);
+    try testing.expect((try a.p.to(u128)) == 5076513310880537);
+    try testing.expect((try a.q.to(u128)) == 70368744177664);
 }
 
 test "big.rational setFloatString" {
@@ -566,8 +568,8 @@ test "big.rational setFloatString" {
     try a.setFloatString("72.14159312071241458852455252781510353");
 
     //                  = 72.1415931207124145885245525278151035308837890625
-    testing.expect((try a.p.to(u128)) == 7214159312071241458852455252781510353);
-    testing.expect((try a.q.to(u128)) == 100000000000000000000000000000000000);
+    try testing.expect((try a.p.to(u128)) == 7214159312071241458852455252781510353);
+    try testing.expect((try a.q.to(u128)) == 100000000000000000000000000000000000);
 }
 
 test "big.rational toFloat" {
@@ -576,22 +578,23 @@ test "big.rational toFloat" {
 
     // = 3.14159297943115234375
     try a.setRatio(3294199, 1048576);
-    testing.expect((try a.toFloat(f64)) == 3.14159297943115234375);
+    try testing.expect((try a.toFloat(f64)) == 3.14159297943115234375);
 
     // = 72.1415931207124145885245525278151035308837890625
     try a.setRatio(5076513310880537, 70368744177664);
-    testing.expect((try a.toFloat(f64)) == 72.141593120712409172417410926841290461290467124);
+    try testing.expect((try a.toFloat(f64)) == 72.141593120712409172417410926841290461290467124);
 }
 
 test "big.rational set/to Float round-trip" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
     var prng = std.rand.DefaultPrng.init(0x5EED);
+    const random = prng.random();
     var i: usize = 0;
     while (i < 512) : (i += 1) {
-        const r = prng.random.float(f64);
+        const r = random.float(f64);
         try a.setFloat(f64, r);
-        testing.expect((try a.toFloat(f64)) == r);
+        try testing.expect((try a.toFloat(f64)) == r);
     }
 }
 
@@ -603,8 +606,8 @@ test "big.rational copy" {
     defer b.deinit();
 
     try a.copyInt(b);
-    testing.expect((try a.p.to(u32)) == 5);
-    testing.expect((try a.q.to(u32)) == 1);
+    try testing.expect((try a.p.to(u32)) == 5);
+    try testing.expect((try a.q.to(u32)) == 1);
 
     var c = try Int.initSet(testing.allocator, 7);
     defer c.deinit();
@@ -612,8 +615,8 @@ test "big.rational copy" {
     defer d.deinit();
 
     try a.copyRatio(c, d);
-    testing.expect((try a.p.to(u32)) == 7);
-    testing.expect((try a.q.to(u32)) == 3);
+    try testing.expect((try a.p.to(u32)) == 7);
+    try testing.expect((try a.q.to(u32)) == 3);
 
     var e = try Int.initSet(testing.allocator, 9);
     defer e.deinit();
@@ -621,8 +624,8 @@ test "big.rational copy" {
     defer f.deinit();
 
     try a.copyRatio(e, f);
-    testing.expect((try a.p.to(u32)) == 3);
-    testing.expect((try a.q.to(u32)) == 1);
+    try testing.expect((try a.p.to(u32)) == 3);
+    try testing.expect((try a.q.to(u32)) == 1);
 }
 
 test "big.rational negate" {
@@ -630,16 +633,16 @@ test "big.rational negate" {
     defer a.deinit();
 
     try a.setInt(-50);
-    testing.expect((try a.p.to(i32)) == -50);
-    testing.expect((try a.q.to(i32)) == 1);
+    try testing.expect((try a.p.to(i32)) == -50);
+    try testing.expect((try a.q.to(i32)) == 1);
 
     a.negate();
-    testing.expect((try a.p.to(i32)) == 50);
-    testing.expect((try a.q.to(i32)) == 1);
+    try testing.expect((try a.p.to(i32)) == 50);
+    try testing.expect((try a.q.to(i32)) == 1);
 
     a.negate();
-    testing.expect((try a.p.to(i32)) == -50);
-    testing.expect((try a.q.to(i32)) == 1);
+    try testing.expect((try a.p.to(i32)) == -50);
+    try testing.expect((try a.q.to(i32)) == 1);
 }
 
 test "big.rational abs" {
@@ -647,16 +650,16 @@ test "big.rational abs" {
     defer a.deinit();
 
     try a.setInt(-50);
-    testing.expect((try a.p.to(i32)) == -50);
-    testing.expect((try a.q.to(i32)) == 1);
+    try testing.expect((try a.p.to(i32)) == -50);
+    try testing.expect((try a.q.to(i32)) == 1);
 
     a.abs();
-    testing.expect((try a.p.to(i32)) == 50);
-    testing.expect((try a.q.to(i32)) == 1);
+    try testing.expect((try a.p.to(i32)) == 50);
+    try testing.expect((try a.q.to(i32)) == 1);
 
     a.abs();
-    testing.expect((try a.p.to(i32)) == 50);
-    testing.expect((try a.q.to(i32)) == 1);
+    try testing.expect((try a.p.to(i32)) == 50);
+    try testing.expect((try a.q.to(i32)) == 1);
 }
 
 test "big.rational swap" {
@@ -668,19 +671,19 @@ test "big.rational swap" {
     try a.setRatio(50, 23);
     try b.setRatio(17, 3);
 
-    testing.expect((try a.p.to(u32)) == 50);
-    testing.expect((try a.q.to(u32)) == 23);
+    try testing.expect((try a.p.to(u32)) == 50);
+    try testing.expect((try a.q.to(u32)) == 23);
 
-    testing.expect((try b.p.to(u32)) == 17);
-    testing.expect((try b.q.to(u32)) == 3);
+    try testing.expect((try b.p.to(u32)) == 17);
+    try testing.expect((try b.q.to(u32)) == 3);
 
     a.swap(&b);
 
-    testing.expect((try a.p.to(u32)) == 17);
-    testing.expect((try a.q.to(u32)) == 3);
+    try testing.expect((try a.p.to(u32)) == 17);
+    try testing.expect((try a.q.to(u32)) == 3);
 
-    testing.expect((try b.p.to(u32)) == 50);
-    testing.expect((try b.q.to(u32)) == 23);
+    try testing.expect((try b.p.to(u32)) == 50);
+    try testing.expect((try b.q.to(u32)) == 23);
 }
 
 test "big.rational order" {
@@ -691,11 +694,11 @@ test "big.rational order" {
 
     try a.setRatio(500, 231);
     try b.setRatio(18903, 8584);
-    testing.expect((try a.order(b)) == .lt);
+    try testing.expect((try a.order(b)) == .lt);
 
     try a.setRatio(890, 10);
     try b.setRatio(89, 1);
-    testing.expect((try a.order(b)) == .eq);
+    try testing.expect((try a.order(b)) == .eq);
 }
 
 test "big.rational add single-limb" {
@@ -706,11 +709,11 @@ test "big.rational add single-limb" {
 
     try a.setRatio(500, 231);
     try b.setRatio(18903, 8584);
-    testing.expect((try a.order(b)) == .lt);
+    try testing.expect((try a.order(b)) == .lt);
 
     try a.setRatio(890, 10);
     try b.setRatio(89, 1);
-    testing.expect((try a.order(b)) == .eq);
+    try testing.expect((try a.order(b)) == .eq);
 }
 
 test "big.rational add" {
@@ -726,7 +729,7 @@ test "big.rational add" {
     try a.add(a, b);
 
     try r.setRatio(984786924199, 290395044174);
-    testing.expect((try a.order(r)) == .eq);
+    try testing.expect((try a.order(r)) == .eq);
 }
 
 test "big.rational sub" {
@@ -742,7 +745,7 @@ test "big.rational sub" {
     try a.sub(a, b);
 
     try r.setRatio(979040510045, 290395044174);
-    testing.expect((try a.order(r)) == .eq);
+    try testing.expect((try a.order(r)) == .eq);
 }
 
 test "big.rational mul" {
@@ -758,7 +761,7 @@ test "big.rational mul" {
     try a.mul(a, b);
 
     try r.setRatio(571481443, 17082061422);
-    testing.expect((try a.order(r)) == .eq);
+    try testing.expect((try a.order(r)) == .eq);
 }
 
 test "big.rational div" {
@@ -774,7 +777,7 @@ test "big.rational div" {
     try a.div(a, b);
 
     try r.setRatio(75531824394, 221015929);
-    testing.expect((try a.order(r)) == .eq);
+    try testing.expect((try a.order(r)) == .eq);
 }
 
 test "big.rational div" {
@@ -787,11 +790,11 @@ test "big.rational div" {
     a.invert();
 
     try r.setRatio(23341, 78923);
-    testing.expect((try a.order(r)) == .eq);
+    try testing.expect((try a.order(r)) == .eq);
 
     try a.setRatio(-78923, 23341);
     a.invert();
 
     try r.setRatio(-23341, 78923);
-    testing.expect((try a.order(r)) == .eq);
+    try testing.expect((try a.order(r)) == .eq);
 }

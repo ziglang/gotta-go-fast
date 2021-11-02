@@ -28,9 +28,9 @@ pub fn __aeabi_dmul(a: f64, b: f64) callconv(.C) f64 {
 
 fn mulXf3(comptime T: type, a: T, b: T) T {
     @setRuntimeSafety(builtin.is_test);
-    const Z = std.meta.Int(false, T.bit_count);
+    const typeWidth = @typeInfo(T).Float.bits;
+    const Z = std.meta.Int(.unsigned, typeWidth);
 
-    const typeWidth = T.bit_count;
     const significandBits = std.math.floatMantissaBits(T);
     const exponentBits = std.math.floatExponentBits(T);
 
@@ -93,8 +93,8 @@ fn mulXf3(comptime T: type, a: T, b: T) T {
         // one or both of a or b is denormal, the other (if applicable) is a
         // normal number.  Renormalize one or both of a and b, and set scale to
         // include the necessary exponent adjustment.
-        if (aAbs < implicitBit) scale +%= normalize(T, &aSignificand);
-        if (bAbs < implicitBit) scale +%= normalize(T, &bSignificand);
+        if (aAbs < implicitBit) scale += normalize(T, &aSignificand);
+        if (bAbs < implicitBit) scale += normalize(T, &bSignificand);
     }
 
     // Or in the implicit significand bit.  (If we fell through from the
@@ -264,36 +264,36 @@ fn wideMultiply(comptime Z: type, a: Z, b: Z, hi: *Z, lo: *Z) void {
     }
 }
 
-fn normalize(comptime T: type, significand: *std.meta.Int(false, T.bit_count)) i32 {
+fn normalize(comptime T: type, significand: *std.meta.Int(.unsigned, @typeInfo(T).Float.bits)) i32 {
     @setRuntimeSafety(builtin.is_test);
-    const Z = std.meta.Int(false, T.bit_count);
+    const Z = std.meta.Int(.unsigned, @typeInfo(T).Float.bits);
     const significandBits = std.math.floatMantissaBits(T);
     const implicitBit = @as(Z, 1) << significandBits;
 
     const shift = @clz(Z, significand.*) - @clz(Z, implicitBit);
     significand.* <<= @intCast(std.math.Log2Int(Z), shift);
-    return 1 - shift;
+    return @as(i32, 1) - shift;
 }
 
 fn wideRightShiftWithSticky(comptime Z: type, hi: *Z, lo: *Z, count: u32) void {
     @setRuntimeSafety(builtin.is_test);
-    const typeWidth = Z.bit_count;
+    const typeWidth = @typeInfo(Z).Int.bits;
     const S = std.math.Log2Int(Z);
     if (count < typeWidth) {
-        const sticky = @truncate(u8, lo.* << @intCast(S, typeWidth -% count));
+        const sticky = @boolToInt((lo.* << @intCast(S, typeWidth -% count)) != 0);
         lo.* = (hi.* << @intCast(S, typeWidth -% count)) | (lo.* >> @intCast(S, count)) | sticky;
         hi.* = hi.* >> @intCast(S, count);
     } else if (count < 2 * typeWidth) {
-        const sticky = @truncate(u8, hi.* << @intCast(S, 2 * typeWidth -% count) | lo.*);
+        const sticky = @boolToInt((hi.* << @intCast(S, 2 * typeWidth -% count) | lo.*) != 0);
         lo.* = hi.* >> @intCast(S, count -% typeWidth) | sticky;
         hi.* = 0;
     } else {
-        const sticky = @truncate(u8, hi.* | lo.*);
+        const sticky = @boolToInt((hi.* | lo.*) != 0);
         lo.* = sticky;
         hi.* = 0;
     }
 }
 
-test "import mulXf3" {
+test {
     _ = @import("mulXf3_test.zig");
 }

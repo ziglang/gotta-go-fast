@@ -11,88 +11,91 @@ and exposure to how various code changes affect key measurements.
 
 ## Strategy
 
-The main script does `git pull` and then runs the suite of measurements against
-the latest master branch commit. When it is done, it repeats. If `git pull`
-yields no new commits, it waits 60 seconds and then tries again.
+This repository is cloned by a Continuous Integration script that runs on every
+master branch commit to [ziglang/zig](https://github.com/ziglang/zig/) and
+executes a series of benchmarks using Linux's performance measurement syscalls
+(the same thing that `perf` does). The machine is a dedicated Hetzner server
+with a AMD Ryzen 9 5950X 16-Core Processor, an NVMe hard drive, Linux kernel
+5.14.14-arch1-1. See more CPU details below in the [[CPU Details]] section.
 
-The file `queue.txt` is a line-delimited list of git commit hashes which can be
-manually added to be processed. The queue will be checked before doing
-`git pull`.
+The measurements are stored in a CSV file which is atomically swapped with
+updated data when a new benchmark completes. After a new benchmark row is added
+to the dataset, it is pushed to `https://ziglang.org/perf/data.csv`. The
+static HTML + JavaScript at https://ziglang.org/perf/ loads `data.csv` and
+presents it in interactive graph form.
 
-This project is deployed on a virtual private sever and constantly running.
-It is not guaranteed to have consistent hardware over the entire life of this
-project, yet we want to provide a graph with meaningful changes over time.
+Each benchmark gets a fixed amount of time allocated: 5 seconds per benchmark.
+For each measurement, there is a min, max, mean, and median value. The best and
+worst runs according to Wall Clock Time are discarded to account for system
+noise.
 
-Therefore, each time a new measurement is drawn, two benchmarks are performed:
-one fixed git commit, as the reference point, and then the new commit being
-tested. Both data points are stored, and any graphs will show the change in
-time in relation to the fixed reference point.
+### Measurements Collected
 
-Measurements are directly stored and committed to this git repository, in CSV
-format. It is planned for new benchmarks to be added over time, and old
-benchmarks to be retired, however the data should remain available.
+ * Wall Clock Time
+ * Peak Resident Set Size (memory usage)
+ * How many times the benchmark was executed in 5 seconds
+ * instructions
+ * cycles
+ * cache-misses
+ * cache-references
+ * branches
+ * branch-misses
 
-## Installation
+Metadata:
 
-### System requirements:
+ * Benchmark name
+ * Timestamp of when the benchmark was executed
+ * Zig Git Commit SHA1
+ * Zig Git Commit Message
+ * Zig Git Commit Date
+ * Zig Git Commit Author
+ * gotta-go-fast Git Commit Sha1
 
-This project was only written with POSIX systems in mind.
-
-These must be installed and available in PATH:
-
- * git
- * ninja
-
-### Process
-
-For each of the `baseline` commit hashes in benchmarks/manifest.json, you must
-provide a corresponding zig installation with the prefix `zig-builds/$HASH`.
-
-You also must set up `zig-builds/src` as a git repository, and set up the build
-directory using the ninja generator.
-
-```
-cd zig-builds/src
-mkdir build
-cmake .. -DCMAKE_BUILD_TYPE=Release -GNinja
-```
-
-You may need additional configuration to get LLVM/Clang/LLD to be detected.
-You can optionally test the installation by running `ninja` in the build
-directory.
-
-This zig git source tree can't be used for anything else; the benchmarking
-script modifies the state of this source tree and relies on the state not being
-otherwise modified.
-
-### Running
-
-Run the `main.zig` program from the root source directory. It is a long running
-process and will periodically poll for changes to the zig source git repo.
-Extra commits to bench can be manually added to the queue.txt file.
-
-The program will periodically modify the `records.csv` file. If you want it to
-automatically commit this file to git and push it, use the command line
-parameter `--auto-commit-and-push`. In this case, the program must be run as a
-user that has permission to do perform `git commit` and `git push` commands.
-
-## What About Cool Graphs And Stuff?
-
-Out of scope. This project's entire purpose is to keep records.csv updated with
-new data.
-
-It will be the job of a separate project to periodically pull this data and
-do something useful with it, such as make pretty graphs and put them on
-ziglang.org.
-
-Here's one such project by @wozeparrot: [zig-perf-graphs](https://wozeparrot.github.io/zig-perf-graphs/).
-
-## Adding a New Benchmark
-
-Add it to `benchmarks/manifest.json`.
-
-You can run a benchmark alone to test it like this:
+### CPU Details
 
 ```
-../../zig-builds/src/build/zig run --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end --release-fast -lc ../../bench.zig -- ../../zig-builds/src/build/zig
+vendor_id	: AuthenticAMD
+cpu family	: 25
+model		: 33
+model name	: AMD Ryzen 9 5950X 16-Core Processor
+stepping	: 0
+microcode	: 0xa201016
+cpu MHz		: 3786.264
+cache size	: 512 KB
+physical id	: 0
+siblings	: 32
+cpu cores	: 16
+apicid		: 31
+fpu		: yes
+fpu_exception	: yes
+cpuid level	: 16
+wp		: yes
+flags		: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 hw_pstate ssbd mba ibrs ibpb stibp vmmcall fsgsbase bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local clzero irperf xsaveerptr rdpru wbnoinvd arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif v_spec_ctrl umip pku ospke vaes vpclmulqdq rdpid overflow_recov succor smca fsrm
+bugs		: sysret_ss_attrs spectre_v1 spectre_v2 spec_store_bypass
+bogomips	: 6789.81
+TLB size	: 2560 4K pages
+clflush size	: 64
+cache_alignment	: 64
+address sizes	: 48 bits physical, 48 bits virtual
+power management: ts ttp tm hwpstate cpb eff_freq_ro [13] [14]
+```
+
+## Instructions for the CI Script
+
+These measurements should only be taken for a Zig compiler that has passed the
+full test suite, and the `zig` command should be a release build matching the
+git commit of `$PATH_TO_ZIG_GIT_REPO`.
+
+After cloning this repository:
+
+```
+zig build run -- $PATH_TO_ZIG_GIT_REPO
+```
+
+## Adding a Benchmark
+
+First add an entry in `manifest.json`. Next, you can test it like this:
+
+```
+zig run bench.zig --pkg-begin app ./benchmarks/foo/bar.zig --pkg-end -O ReleaseFast -- zig
 ```

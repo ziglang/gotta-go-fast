@@ -1,9 +1,13 @@
 const std = @import("std");
 const bench = @import("root");
 
-pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {}
+pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {
+    _ = gpa;
+    _ = options;
+}
 
 pub fn run(gpa: *std.mem.Allocator, context: void) !void {
+    _ = context;
     // Benchmarks ported from https://github.com/martinus/map_benchmark
     randomDistinct(gpa);
 }
@@ -22,10 +26,10 @@ fn randomDistinct(gpa: *std.mem.Allocator) void {
         defer map.deinit();
         var i: u32 = 0;
         while (i < num_iters) : (i += 1) {
-            const key = @intCast(i32, rng.random.uintLessThan(u32, _5distinct));
+            const key = @intCast(i32, rng.random().uintLessThan(u32, _5distinct));
             var n = map.getOrPutValue(key, 0) catch unreachable;
-            n.value += 1;
-            checksum += n.value;
+            n.value_ptr.* += 1;
+            checksum += n.value_ptr.*;
         }
         if (checksum != 54992517) @panic("bad checksum");
     }
@@ -36,10 +40,10 @@ fn randomDistinct(gpa: *std.mem.Allocator) void {
         checksum = 0;
         var i: u32 = 0;
         while (i < num_iters) : (i += 1) {
-            const key = @intCast(i32, rng.random.uintLessThan(u32, _25distinct));
+            const key = @intCast(i32, rng.random().uintLessThan(u32, _25distinct));
             var n = map.getOrPutValue(key, 0) catch unreachable;
-            n.value += 1;
-            checksum += n.value;
+            n.value_ptr.* += 1;
+            checksum += n.value_ptr.*;
         }
         if (checksum != 15001972) @panic("bad checksum");
     }
@@ -50,10 +54,10 @@ fn randomDistinct(gpa: *std.mem.Allocator) void {
         checksum = 0;
         var i: u32 = 0;
         while (i < num_iters) : (i += 1) {
-            const key = @intCast(i32, rng.random.uintLessThan(u32, _50distinct));
+            const key = @intCast(i32, rng.random().uintLessThan(u32, _50distinct));
             var n = map.getOrPutValue(key, 0) catch unreachable;
-            n.value += 1;
-            checksum += n.value;
+            n.value_ptr.* += 1;
+            checksum += n.value_ptr.*;
         }
         if (checksum != 10001436) @panic("bad checksum");
     }
@@ -64,10 +68,10 @@ fn randomDistinct(gpa: *std.mem.Allocator) void {
         checksum = 0;
         var i: u32 = 0;
         while (i < num_iters) : (i += 1) {
-            const key = @intCast(i32, @truncate(u32, rng.next()));
+            const key = @bitCast(i32, @truncate(u32, rng.next()));
             var n = map.getOrPutValue(key, 0) catch unreachable;
-            n.value += 1;
-            checksum += n.value;
+            n.value_ptr.* += 1;
+            checksum += n.value_ptr.*;
         }
         if (checksum != 5002904) @panic("bad checksum");
     }
@@ -77,24 +81,27 @@ fn randomDistinct(gpa: *std.mem.Allocator) void {
 // slower than just calling next() and these benchmarks only require getting
 // consecutive u64's.
 pub const Sfc64 = struct {
-    random: std.rand.Random,
-
     a: u64 = undefined,
     b: u64 = undefined,
     c: u64 = undefined,
     counter: u64 = undefined,
+
+    const Random = std.rand.Random;
+    const math = std.math;
 
     const Rotation = 24;
     const RightShift = 11;
     const LeftShift = 3;
 
     pub fn init(init_s: u64) Sfc64 {
-        var x = Sfc64{
-            .random = std.rand.Random{ .fillFn = fill },
-        };
+        var x = Sfc64{};
 
         x.seed(init_s);
         return x;
+    }
+
+    pub fn random(self: *Sfc64) Random {
+        return Random.init(self, fill);
     }
 
     pub fn next(self: *Sfc64) u64 {
@@ -102,11 +109,11 @@ pub const Sfc64 = struct {
         self.counter += 1;
         self.a = self.b ^ (self.b >> RightShift);
         self.b = self.c +% (self.c << LeftShift);
-        self.c = std.math.rotl(u64, self.c, Rotation) +% tmp;
+        self.c = math.rotl(u64, self.c, Rotation) +% tmp;
         return tmp;
     }
 
-    pub fn seed(self: *Sfc64, init_s: u64) void {
+    fn seed(self: *Sfc64, init_s: u64) void {
         self.a = init_s;
         self.b = init_s;
         self.c = init_s;
@@ -117,9 +124,7 @@ pub const Sfc64 = struct {
         }
     }
 
-    fn fill(r: *std.rand.Random, buf: []u8) void {
-        const self = @fieldParentPtr(Sfc64, "random", r);
-
+    pub fn fill(self: *Sfc64, buf: []u8) void {
         var i: usize = 0;
         const aligned_len = buf.len - (buf.len & 7);
 

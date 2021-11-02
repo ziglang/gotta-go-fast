@@ -1,12 +1,11 @@
 const std = @import("std.zig");
-const builtin = std.builtin;
 const io = std.io;
 const os = std.os;
 const math = std.math;
 const mem = std.mem;
 const debug = std.debug;
-const InStream = std.stream.InStream;
 const File = std.fs.File;
+const native_endian = @import("builtin").target.cpu.arch.endian();
 
 pub const AT_NULL = 0;
 pub const AT_IGNORE = 1;
@@ -307,7 +306,7 @@ pub const VER_FLG_BASE = 0x1;
 pub const VER_FLG_WEAK = 0x2;
 
 /// File types
-pub const ET = extern enum(u16) {
+pub const ET = enum(u16) {
     /// No file type
     NONE = 0,
 
@@ -331,8 +330,9 @@ pub const ET = extern enum(u16) {
 };
 
 /// All integers are native endian.
-const Header = struct {
-    endian: builtin.Endian,
+pub const Header = struct {
+    endian: std.builtin.Endian,
+    machine: EM,
     is_64: bool,
     entry: u64,
     phoff: u64,
@@ -342,183 +342,171 @@ const Header = struct {
     shentsize: u16,
     shnum: u16,
     shstrndx: u16,
-};
 
-pub fn readHeader(file: File) !Header {
-    var hdr_buf: [@sizeOf(Elf64_Ehdr)]u8 align(@alignOf(Elf64_Ehdr)) = undefined;
-    try preadNoEof(file, &hdr_buf, 0);
-    const hdr32 = @ptrCast(*Elf32_Ehdr, &hdr_buf);
-    const hdr64 = @ptrCast(*Elf64_Ehdr, &hdr_buf);
-    if (!mem.eql(u8, hdr32.e_ident[0..4], "\x7fELF")) return error.InvalidElfMagic;
-    if (hdr32.e_ident[EI_VERSION] != 1) return error.InvalidElfVersion;
-
-    const endian: std.builtin.Endian = switch (hdr32.e_ident[EI_DATA]) {
-        ELFDATA2LSB => .Little,
-        ELFDATA2MSB => .Big,
-        else => return error.InvalidElfEndian,
-    };
-    const need_bswap = endian != std.builtin.endian;
-
-    const is_64 = switch (hdr32.e_ident[EI_CLASS]) {
-        ELFCLASS32 => false,
-        ELFCLASS64 => true,
-        else => return error.InvalidElfClass,
-    };
-
-    return @as(Header, .{
-        .endian = endian,
-        .is_64 = is_64,
-        .entry = int(is_64, need_bswap, hdr32.e_entry, hdr64.e_entry),
-        .phoff = int(is_64, need_bswap, hdr32.e_phoff, hdr64.e_phoff),
-        .shoff = int(is_64, need_bswap, hdr32.e_shoff, hdr64.e_shoff),
-        .phentsize = int(is_64, need_bswap, hdr32.e_phentsize, hdr64.e_phentsize),
-        .phnum = int(is_64, need_bswap, hdr32.e_phnum, hdr64.e_phnum),
-        .shentsize = int(is_64, need_bswap, hdr32.e_shentsize, hdr64.e_shentsize),
-        .shnum = int(is_64, need_bswap, hdr32.e_shnum, hdr64.e_shnum),
-        .shstrndx = int(is_64, need_bswap, hdr32.e_shstrndx, hdr64.e_shstrndx),
-    });
-}
-
-/// All integers are native endian.
-pub const AllHeaders = struct {
-    header: Header,
-    section_headers: []Elf64_Shdr,
-    program_headers: []Elf64_Phdr,
-    allocator: *mem.Allocator,
-};
-
-pub fn readAllHeaders(allocator: *mem.Allocator, file: File) !AllHeaders {
-    var hdrs: AllHeaders = .{
-        .allocator = allocator,
-        .header = try readHeader(file),
-        .section_headers = undefined,
-        .program_headers = undefined,
-    };
-    const is_64 = hdrs.header.is_64;
-    const need_bswap = hdrs.header.endian != std.builtin.endian;
-
-    hdrs.section_headers = try allocator.alloc(Elf64_Shdr, hdrs.header.shnum);
-    errdefer allocator.free(hdrs.section_headers);
-
-    hdrs.program_headers = try allocator.alloc(Elf64_Phdr, hdrs.header.phnum);
-    errdefer allocator.free(hdrs.program_headers);
-
-    // If the ELF file is 64-bit and same-endianness, then all we have to do is
-    // yeet the bytes into memory.
-    // If only the endianness is different, they can be simply byte swapped.
-    if (is_64) {
-        const shdr_buf = std.mem.sliceAsBytes(hdrs.section_headers);
-        const phdr_buf = std.mem.sliceAsBytes(hdrs.program_headers);
-        try preadNoEof(file, shdr_buf, hdrs.header.shoff);
-        try preadNoEof(file, phdr_buf, hdrs.header.phoff);
-
-        if (need_bswap) {
-            for (hdrs.section_headers) |*shdr| {
-                shdr.* = .{
-                    .sh_name = @byteSwap(@TypeOf(shdr.sh_name), shdr.sh_name),
-                    .sh_type = @byteSwap(@TypeOf(shdr.sh_type), shdr.sh_type),
-                    .sh_flags = @byteSwap(@TypeOf(shdr.sh_flags), shdr.sh_flags),
-                    .sh_addr = @byteSwap(@TypeOf(shdr.sh_addr), shdr.sh_addr),
-                    .sh_offset = @byteSwap(@TypeOf(shdr.sh_offset), shdr.sh_offset),
-                    .sh_size = @byteSwap(@TypeOf(shdr.sh_size), shdr.sh_size),
-                    .sh_link = @byteSwap(@TypeOf(shdr.sh_link), shdr.sh_link),
-                    .sh_info = @byteSwap(@TypeOf(shdr.sh_info), shdr.sh_info),
-                    .sh_addralign = @byteSwap(@TypeOf(shdr.sh_addralign), shdr.sh_addralign),
-                    .sh_entsize = @byteSwap(@TypeOf(shdr.sh_entsize), shdr.sh_entsize),
-                };
-            }
-            for (hdrs.program_headers) |*phdr| {
-                phdr.* = .{
-                    .p_type = @byteSwap(@TypeOf(phdr.p_type), phdr.p_type),
-                    .p_offset = @byteSwap(@TypeOf(phdr.p_offset), phdr.p_offset),
-                    .p_vaddr = @byteSwap(@TypeOf(phdr.p_vaddr), phdr.p_vaddr),
-                    .p_paddr = @byteSwap(@TypeOf(phdr.p_paddr), phdr.p_paddr),
-                    .p_filesz = @byteSwap(@TypeOf(phdr.p_filesz), phdr.p_filesz),
-                    .p_memsz = @byteSwap(@TypeOf(phdr.p_memsz), phdr.p_memsz),
-                    .p_flags = @byteSwap(@TypeOf(phdr.p_flags), phdr.p_flags),
-                    .p_align = @byteSwap(@TypeOf(phdr.p_align), phdr.p_align),
-                };
-            }
-        }
-
-        return hdrs;
+    pub fn program_header_iterator(self: Header, parse_source: anytype) ProgramHeaderIterator(@TypeOf(parse_source)) {
+        return ProgramHeaderIterator(@TypeOf(parse_source)){
+            .elf_header = self,
+            .parse_source = parse_source,
+        };
     }
 
-    const shdrs_32 = try allocator.alloc(Elf32_Shdr, hdrs.header.shnum);
-    defer allocator.free(shdrs_32);
-
-    const phdrs_32 = try allocator.alloc(Elf32_Phdr, hdrs.header.phnum);
-    defer allocator.free(phdrs_32);
-
-    const shdr_buf = std.mem.sliceAsBytes(shdrs_32);
-    const phdr_buf = std.mem.sliceAsBytes(phdrs_32);
-    try preadNoEof(file, shdr_buf, hdrs.header.shoff);
-    try preadNoEof(file, phdr_buf, hdrs.header.phoff);
-
-    if (need_bswap) {
-        for (hdrs.section_headers) |*shdr, i| {
-            const o = shdrs_32[i];
-            shdr.* = .{
-                .sh_name = @byteSwap(@TypeOf(o.sh_name), o.sh_name),
-                .sh_type = @byteSwap(@TypeOf(o.sh_type), o.sh_type),
-                .sh_flags = @byteSwap(@TypeOf(o.sh_flags), o.sh_flags),
-                .sh_addr = @byteSwap(@TypeOf(o.sh_addr), o.sh_addr),
-                .sh_offset = @byteSwap(@TypeOf(o.sh_offset), o.sh_offset),
-                .sh_size = @byteSwap(@TypeOf(o.sh_size), o.sh_size),
-                .sh_link = @byteSwap(@TypeOf(o.sh_link), o.sh_link),
-                .sh_info = @byteSwap(@TypeOf(o.sh_info), o.sh_info),
-                .sh_addralign = @byteSwap(@TypeOf(o.sh_addralign), o.sh_addralign),
-                .sh_entsize = @byteSwap(@TypeOf(o.sh_entsize), o.sh_entsize),
-            };
-        }
-        for (hdrs.program_headers) |*phdr, i| {
-            const o = phdrs_32[i];
-            phdr.* = .{
-                .p_type = @byteSwap(@TypeOf(o.p_type), o.p_type),
-                .p_offset = @byteSwap(@TypeOf(o.p_offset), o.p_offset),
-                .p_vaddr = @byteSwap(@TypeOf(o.p_vaddr), o.p_vaddr),
-                .p_paddr = @byteSwap(@TypeOf(o.p_paddr), o.p_paddr),
-                .p_filesz = @byteSwap(@TypeOf(o.p_filesz), o.p_filesz),
-                .p_memsz = @byteSwap(@TypeOf(o.p_memsz), o.p_memsz),
-                .p_flags = @byteSwap(@TypeOf(o.p_flags), o.p_flags),
-                .p_align = @byteSwap(@TypeOf(o.p_align), o.p_align),
-            };
-        }
-    } else {
-        for (hdrs.section_headers) |*shdr, i| {
-            const o = shdrs_32[i];
-            shdr.* = .{
-                .sh_name = o.sh_name,
-                .sh_type = o.sh_type,
-                .sh_flags = o.sh_flags,
-                .sh_addr = o.sh_addr,
-                .sh_offset = o.sh_offset,
-                .sh_size = o.sh_size,
-                .sh_link = o.sh_link,
-                .sh_info = o.sh_info,
-                .sh_addralign = o.sh_addralign,
-                .sh_entsize = o.sh_entsize,
-            };
-        }
-        for (hdrs.program_headers) |*phdr, i| {
-            const o = phdrs_32[i];
-            phdr.* = .{
-                .p_type = o.p_type,
-                .p_offset = o.p_offset,
-                .p_vaddr = o.p_vaddr,
-                .p_paddr = o.p_paddr,
-                .p_filesz = o.p_filesz,
-                .p_memsz = o.p_memsz,
-                .p_flags = o.p_flags,
-                .p_align = o.p_align,
-            };
-        }
+    pub fn section_header_iterator(self: Header, parse_source: anytype) SectionHeaderIterator(@TypeOf(parse_source)) {
+        return SectionHeaderIterator(@TypeOf(parse_source)){
+            .elf_header = self,
+            .parse_source = parse_source,
+        };
     }
 
-    return hdrs;
+    pub fn read(parse_source: anytype) !Header {
+        var hdr_buf: [@sizeOf(Elf64_Ehdr)]u8 align(@alignOf(Elf64_Ehdr)) = undefined;
+        try parse_source.seekableStream().seekTo(0);
+        try parse_source.reader().readNoEof(&hdr_buf);
+        return Header.parse(&hdr_buf);
+    }
+
+    pub fn parse(hdr_buf: *align(@alignOf(Elf64_Ehdr)) const [@sizeOf(Elf64_Ehdr)]u8) !Header {
+        const hdr32 = @ptrCast(*const Elf32_Ehdr, hdr_buf);
+        const hdr64 = @ptrCast(*const Elf64_Ehdr, hdr_buf);
+        if (!mem.eql(u8, hdr32.e_ident[0..4], "\x7fELF")) return error.InvalidElfMagic;
+        if (hdr32.e_ident[EI_VERSION] != 1) return error.InvalidElfVersion;
+
+        const endian: std.builtin.Endian = switch (hdr32.e_ident[EI_DATA]) {
+            ELFDATA2LSB => .Little,
+            ELFDATA2MSB => .Big,
+            else => return error.InvalidElfEndian,
+        };
+        const need_bswap = endian != native_endian;
+
+        const is_64 = switch (hdr32.e_ident[EI_CLASS]) {
+            ELFCLASS32 => false,
+            ELFCLASS64 => true,
+            else => return error.InvalidElfClass,
+        };
+
+        const machine = if (need_bswap) blk: {
+            const value = @enumToInt(hdr32.e_machine);
+            break :blk @intToEnum(EM, @byteSwap(@TypeOf(value), value));
+        } else hdr32.e_machine;
+
+        return @as(Header, .{
+            .endian = endian,
+            .machine = machine,
+            .is_64 = is_64,
+            .entry = int(is_64, need_bswap, hdr32.e_entry, hdr64.e_entry),
+            .phoff = int(is_64, need_bswap, hdr32.e_phoff, hdr64.e_phoff),
+            .shoff = int(is_64, need_bswap, hdr32.e_shoff, hdr64.e_shoff),
+            .phentsize = int(is_64, need_bswap, hdr32.e_phentsize, hdr64.e_phentsize),
+            .phnum = int(is_64, need_bswap, hdr32.e_phnum, hdr64.e_phnum),
+            .shentsize = int(is_64, need_bswap, hdr32.e_shentsize, hdr64.e_shentsize),
+            .shnum = int(is_64, need_bswap, hdr32.e_shnum, hdr64.e_shnum),
+            .shstrndx = int(is_64, need_bswap, hdr32.e_shstrndx, hdr64.e_shstrndx),
+        });
+    }
+};
+
+pub fn ProgramHeaderIterator(ParseSource: anytype) type {
+    return struct {
+        elf_header: Header,
+        parse_source: ParseSource,
+        index: usize = 0,
+
+        pub fn next(self: *@This()) !?Elf64_Phdr {
+            if (self.index >= self.elf_header.phnum) return null;
+            defer self.index += 1;
+
+            if (self.elf_header.is_64) {
+                var phdr: Elf64_Phdr = undefined;
+                const offset = self.elf_header.phoff + @sizeOf(@TypeOf(phdr)) * self.index;
+                try self.parse_source.seekableStream().seekTo(offset);
+                try self.parse_source.reader().readNoEof(mem.asBytes(&phdr));
+
+                // ELF endianness matches native endianness.
+                if (self.elf_header.endian == native_endian) return phdr;
+
+                // Convert fields to native endianness.
+                mem.bswapAllFields(Elf64_Phdr, &phdr);
+                return phdr;
+            }
+
+            var phdr: Elf32_Phdr = undefined;
+            const offset = self.elf_header.phoff + @sizeOf(@TypeOf(phdr)) * self.index;
+            try self.parse_source.seekableStream().seekTo(offset);
+            try self.parse_source.reader().readNoEof(mem.asBytes(&phdr));
+
+            // ELF endianness does NOT match native endianness.
+            if (self.elf_header.endian != native_endian) {
+                // Convert fields to native endianness.
+                mem.bswapAllFields(Elf32_Phdr, &phdr);
+            }
+
+            // Convert 32-bit header to 64-bit.
+            return Elf64_Phdr{
+                .p_type = phdr.p_type,
+                .p_offset = phdr.p_offset,
+                .p_vaddr = phdr.p_vaddr,
+                .p_paddr = phdr.p_paddr,
+                .p_filesz = phdr.p_filesz,
+                .p_memsz = phdr.p_memsz,
+                .p_flags = phdr.p_flags,
+                .p_align = phdr.p_align,
+            };
+        }
+    };
 }
 
-pub fn int(is_64: bool, need_bswap: bool, int_32: var, int_64: var) @TypeOf(int_64) {
+pub fn SectionHeaderIterator(ParseSource: anytype) type {
+    return struct {
+        elf_header: Header,
+        parse_source: ParseSource,
+        index: usize = 0,
+
+        pub fn next(self: *@This()) !?Elf64_Shdr {
+            if (self.index >= self.elf_header.shnum) return null;
+            defer self.index += 1;
+
+            if (self.elf_header.is_64) {
+                var shdr: Elf64_Shdr = undefined;
+                const offset = self.elf_header.shoff + @sizeOf(@TypeOf(shdr)) * self.index;
+                try self.parse_source.seekableStream().seekTo(offset);
+                try self.parse_source.reader().readNoEof(mem.asBytes(&shdr));
+
+                // ELF endianness matches native endianness.
+                if (self.elf_header.endian == native_endian) return shdr;
+
+                // Convert fields to native endianness.
+                mem.bswapAllFields(Elf64_Shdr, &shdr);
+                return shdr;
+            }
+
+            var shdr: Elf32_Shdr = undefined;
+            const offset = self.elf_header.shoff + @sizeOf(@TypeOf(shdr)) * self.index;
+            try self.parse_source.seekableStream().seekTo(offset);
+            try self.parse_source.reader().readNoEof(mem.asBytes(&shdr));
+
+            // ELF endianness does NOT match native endianness.
+            if (self.elf_header.endian != native_endian) {
+                // Convert fields to native endianness.
+                mem.bswapAllFields(Elf32_Shdr, &shdr);
+            }
+
+            // Convert 32-bit header to 64-bit.
+            return Elf64_Shdr{
+                .sh_name = shdr.sh_name,
+                .sh_type = shdr.sh_type,
+                .sh_flags = shdr.sh_flags,
+                .sh_addr = shdr.sh_addr,
+                .sh_offset = shdr.sh_offset,
+                .sh_size = shdr.sh_size,
+                .sh_link = shdr.sh_link,
+                .sh_info = shdr.sh_info,
+                .sh_addralign = shdr.sh_addralign,
+                .sh_entsize = shdr.sh_entsize,
+            };
+        }
+    };
+}
+
+pub fn int(is_64: bool, need_bswap: bool, int_32: anytype, int_64: anytype) @TypeOf(int_64) {
     if (is_64) {
         if (need_bswap) {
             return @byteSwap(@TypeOf(int_64), int_64);
@@ -530,31 +518,11 @@ pub fn int(is_64: bool, need_bswap: bool, int_32: var, int_64: var) @TypeOf(int_
     }
 }
 
-pub fn int32(need_bswap: bool, int_32: var, comptime Int64: var) Int64 {
+pub fn int32(need_bswap: bool, int_32: anytype, comptime Int64: anytype) Int64 {
     if (need_bswap) {
         return @byteSwap(@TypeOf(int_32), int_32);
     } else {
         return int_32;
-    }
-}
-
-fn preadNoEof(file: std.fs.File, buf: []u8, offset: u64) !void {
-    var i: u64 = 0;
-    while (i < buf.len) {
-        const len = file.pread(buf[i .. buf.len - i], offset + i) catch |err| switch (err) {
-            error.SystemResources => return error.SystemResources,
-            error.IsDir => return error.UnableToReadElfFile,
-            error.OperationAborted => return error.UnableToReadElfFile,
-            error.BrokenPipe => return error.UnableToReadElfFile,
-            error.Unseekable => return error.UnableToReadElfFile,
-            error.ConnectionResetByPeer => return error.UnableToReadElfFile,
-            error.ConnectionTimedOut => return error.UnableToReadElfFile,
-            error.InputOutput => return error.FileSystem,
-            error.Unexpected => return error.Unexpected,
-            error.WouldBlock => return error.Unexpected,
-        };
-        if (len == 0) return error.UnexpectedEndOfFile;
-        i += len;
     }
 }
 
@@ -706,20 +674,48 @@ pub const Elf64_Syminfo = extern struct {
 pub const Elf32_Rel = extern struct {
     r_offset: Elf32_Addr,
     r_info: Elf32_Word,
+
+    pub inline fn r_sym(self: @This()) u24 {
+        return @truncate(u24, self.r_info >> 8);
+    }
+    pub inline fn r_type(self: @This()) u8 {
+        return @truncate(u8, self.r_info & 0xff);
+    }
 };
 pub const Elf64_Rel = extern struct {
     r_offset: Elf64_Addr,
     r_info: Elf64_Xword,
+
+    pub inline fn r_sym(self: @This()) u32 {
+        return @truncate(u32, self.r_info >> 32);
+    }
+    pub inline fn r_type(self: @This()) u32 {
+        return @truncate(u32, self.r_info & 0xffffffff);
+    }
 };
 pub const Elf32_Rela = extern struct {
     r_offset: Elf32_Addr,
     r_info: Elf32_Word,
     r_addend: Elf32_Sword,
+
+    pub inline fn r_sym(self: @This()) u24 {
+        return @truncate(u24, self.r_info >> 8);
+    }
+    pub inline fn r_type(self: @This()) u8 {
+        return @truncate(u8, self.r_info & 0xff);
+    }
 };
 pub const Elf64_Rela = extern struct {
     r_offset: Elf64_Addr,
     r_info: Elf64_Xword,
     r_addend: Elf64_Sxword,
+
+    pub inline fn r_sym(self: @This()) u32 {
+        return @truncate(u32, self.r_info >> 32);
+    }
+    pub inline fn r_type(self: @This()) u32 {
+        return @truncate(u32, self.r_info & 0xffffffff);
+    }
 };
 pub const Elf32_Dyn = extern struct {
     d_tag: Elf32_Sword,
@@ -904,6 +900,16 @@ pub const Dyn = switch (@sizeOf(usize)) {
     8 => Elf64_Dyn,
     else => @compileError("expected pointer size of 32 or 64"),
 };
+pub const Rel = switch (@sizeOf(usize)) {
+    4 => Elf32_Rel,
+    8 => Elf64_Rel,
+    else => @compileError("expected pointer size of 32 or 64"),
+};
+pub const Rela = switch (@sizeOf(usize)) {
+    4 => Elf32_Rela,
+    8 => Elf64_Rela,
+    else => @compileError("expected pointer size of 32 or 64"),
+};
 pub const Shdr = switch (@sizeOf(usize)) {
     4 => Elf32_Shdr,
     8 => Elf64_Shdr,
@@ -924,12 +930,22 @@ pub const Verdaux = switch (@sizeOf(usize)) {
     8 => Elf64_Verdaux,
     else => @compileError("expected pointer size of 32 or 64"),
 };
+pub const Addr = switch (@sizeOf(usize)) {
+    4 => Elf32_Addr,
+    8 => Elf64_Addr,
+    else => @compileError("expected pointer size of 32 or 64"),
+};
+pub const Half = switch (@sizeOf(usize)) {
+    4 => Elf32_Half,
+    8 => Elf64_Half,
+    else => @compileError("expected pointer size of 32 or 64"),
+};
 
 /// Machine architectures
 /// See current registered ELF machine architectures at:
 ///    http://www.uxsglobal.com/developers/gabi/latest/ch4.eheader.html
 /// The underscore prefix is because many of these start with numbers.
-pub const EM = extern enum(u16) {
+pub const EM = enum(u16) {
     /// No machine
     _NONE = 0,
 
@@ -962,6 +978,9 @@ pub const EM = extern enum(u16) {
 
     /// MIPS RS3000 Little-endian
     _MIPS_RS3_LE = 10,
+
+    /// SPU Mark II
+    _SPU_2 = 13,
 
     /// Hewlett-Packard PA-RISC
     _PARISC = 15,
@@ -1460,6 +1479,8 @@ pub const EM = extern enum(u16) {
 
     /// Linux kernel bpf virtual machine
     _BPF = 247,
+
+    _,
 };
 
 /// Section data should be writable during execution.
@@ -1570,3 +1591,100 @@ pub const PF_MASKOS = 0x0ff00000;
 
 /// Bits for processor-specific semantics.
 pub const PF_MASKPROC = 0xf0000000;
+
+// Special section indexes used in Elf{32,64}_Sym.
+pub const SHN_UNDEF = 0;
+pub const SHN_LORESERVE = 0xff00;
+pub const SHN_LOPROC = 0xff00;
+pub const SHN_HIPROC = 0xff1f;
+pub const SHN_LIVEPATCH = 0xff20;
+pub const SHN_ABS = 0xfff1;
+pub const SHN_COMMON = 0xfff2;
+pub const SHN_HIRESERVE = 0xffff;
+
+/// AMD x86-64 relocations.
+/// No reloc
+pub const R_X86_64_NONE = 0;
+/// Direct 64 bit
+pub const R_X86_64_64 = 1;
+/// PC relative 32 bit signed
+pub const R_X86_64_PC32 = 2;
+/// 32 bit GOT entry
+pub const R_X86_64_GOT32 = 3;
+/// 32 bit PLT address
+pub const R_X86_64_PLT32 = 4;
+/// Copy symbol at runtime
+pub const R_X86_64_COPY = 5;
+/// Create GOT entry
+pub const R_X86_64_GLOB_DAT = 6;
+/// Create PLT entry
+pub const R_X86_64_JUMP_SLOT = 7;
+/// Adjust by program base
+pub const R_X86_64_RELATIVE = 8;
+/// 32 bit signed PC relative offset to GOT
+pub const R_X86_64_GOTPCREL = 9;
+/// Direct 32 bit zero extended
+pub const R_X86_64_32 = 10;
+/// Direct 32 bit sign extended
+pub const R_X86_64_32S = 11;
+/// Direct 16 bit zero extended
+pub const R_X86_64_16 = 12;
+/// 16 bit sign extended pc relative
+pub const R_X86_64_PC16 = 13;
+/// Direct 8 bit sign extended
+pub const R_X86_64_8 = 14;
+/// 8 bit sign extended pc relative
+pub const R_X86_64_PC8 = 15;
+/// ID of module containing symbol
+pub const R_X86_64_DTPMOD64 = 16;
+/// Offset in module's TLS block
+pub const R_X86_64_DTPOFF64 = 17;
+/// Offset in initial TLS block
+pub const R_X86_64_TPOFF64 = 18;
+/// 32 bit signed PC relative offset to two GOT entries for GD symbol
+pub const R_X86_64_TLSGD = 19;
+/// 32 bit signed PC relative offset to two GOT entries for LD symbol
+pub const R_X86_64_TLSLD = 20;
+/// Offset in TLS block
+pub const R_X86_64_DTPOFF32 = 21;
+/// 32 bit signed PC relative offset to GOT entry for IE symbol
+pub const R_X86_64_GOTTPOFF = 22;
+/// Offset in initial TLS block
+pub const R_X86_64_TPOFF32 = 23;
+/// PC relative 64 bit
+pub const R_X86_64_PC64 = 24;
+/// 64 bit offset to GOT
+pub const R_X86_64_GOTOFF64 = 25;
+/// 32 bit signed pc relative offset to GOT
+pub const R_X86_64_GOTPC32 = 26;
+/// 64 bit GOT entry offset
+pub const R_X86_64_GOT64 = 27;
+/// 64 bit PC relative offset to GOT entry
+pub const R_X86_64_GOTPCREL64 = 28;
+/// 64 bit PC relative offset to GOT
+pub const R_X86_64_GOTPC64 = 29;
+/// Like GOT64, says PLT entry needed
+pub const R_X86_64_GOTPLT64 = 30;
+/// 64-bit GOT relative offset to PLT entry
+pub const R_X86_64_PLTOFF64 = 31;
+/// Size of symbol plus 32-bit addend
+pub const R_X86_64_SIZE32 = 32;
+/// Size of symbol plus 64-bit addend
+pub const R_X86_64_SIZE64 = 33;
+/// GOT offset for TLS descriptor
+pub const R_X86_64_GOTPC32_TLSDESC = 34;
+/// Marker for call through TLS descriptor
+pub const R_X86_64_TLSDESC_CALL = 35;
+/// TLS descriptor
+pub const R_X86_64_TLSDESC = 36;
+/// Adjust indirectly by program base
+pub const R_X86_64_IRELATIVE = 37;
+/// 64-bit adjust by program base
+pub const R_X86_64_RELATIVE64 = 38;
+/// 39 Reserved was R_X86_64_PC32_BND 
+/// 40 Reserved was R_X86_64_PLT32_BND
+/// Load from 32 bit signed pc relative offset to GOT entry without REX prefix, relaxable
+pub const R_X86_64_GOTPCRELX = 41;
+/// Load from 32 bit signed PC relative offset to GOT entry with REX prefix, relaxable
+pub const R_X86_64_REX_GOTPCRELX = 42;
+pub const R_X86_64_NUM = 43;

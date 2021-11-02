@@ -15,7 +15,7 @@ const maxInt = std.math.maxInt;
 ///  - atanh(+-1) = +-inf with signal
 ///  - atanh(x)   = nan if |x| > 1 with signal
 ///  - atanh(nan) = nan
-pub fn atanh(x: var) @TypeOf(x) {
+pub fn atanh(x: anytype) @TypeOf(x) {
     const T = @TypeOf(x);
     return switch (T) {
         f32 => atanh_32(x),
@@ -40,7 +40,7 @@ fn atanh_32(x: f32) f32 {
         if (u < 0x3F800000 - (32 << 23)) {
             // underflow
             if (u < (1 << 23)) {
-                math.forceEval(y * y);
+                math.doNotOptimizeAway(y * y);
             }
         }
         // |x| < 0.5
@@ -69,7 +69,7 @@ fn atanh_64(x: f64) f64 {
         if (e < 0x3FF - 32) {
             // underflow
             if (e == 0) {
-                math.forceEval(@floatCast(f32, y));
+                math.doNotOptimizeAway(@floatCast(f32, y));
             }
         }
         // |x| < 0.5
@@ -84,38 +84,38 @@ fn atanh_64(x: f64) f64 {
 }
 
 test "math.atanh" {
-    expect(atanh(@as(f32, 0.0)) == atanh_32(0.0));
-    expect(atanh(@as(f64, 0.0)) == atanh_64(0.0));
+    try expect(atanh(@as(f32, 0.0)) == atanh_32(0.0));
+    try expect(atanh(@as(f64, 0.0)) == atanh_64(0.0));
 }
 
 test "math.atanh_32" {
     const epsilon = 0.000001;
 
-    expect(math.approxEq(f32, atanh_32(0.0), 0.0, epsilon));
-    expect(math.approxEq(f32, atanh_32(0.2), 0.202733, epsilon));
-    expect(math.approxEq(f32, atanh_32(0.8923), 1.433099, epsilon));
+    try expect(math.approxEqAbs(f32, atanh_32(0.0), 0.0, epsilon));
+    try expect(math.approxEqAbs(f32, atanh_32(0.2), 0.202733, epsilon));
+    try expect(math.approxEqAbs(f32, atanh_32(0.8923), 1.433099, epsilon));
 }
 
 test "math.atanh_64" {
     const epsilon = 0.000001;
 
-    expect(math.approxEq(f64, atanh_64(0.0), 0.0, epsilon));
-    expect(math.approxEq(f64, atanh_64(0.2), 0.202733, epsilon));
-    expect(math.approxEq(f64, atanh_64(0.8923), 1.433099, epsilon));
+    try expect(math.approxEqAbs(f64, atanh_64(0.0), 0.0, epsilon));
+    try expect(math.approxEqAbs(f64, atanh_64(0.2), 0.202733, epsilon));
+    try expect(math.approxEqAbs(f64, atanh_64(0.8923), 1.433099, epsilon));
 }
 
 test "math.atanh32.special" {
-    expect(math.isPositiveInf(atanh_32(1)));
-    expect(math.isNegativeInf(atanh_32(-1)));
-    expect(math.isSignalNan(atanh_32(1.5)));
-    expect(math.isSignalNan(atanh_32(-1.5)));
-    expect(math.isNan(atanh_32(math.nan(f32))));
+    try expect(math.isPositiveInf(atanh_32(1)));
+    try expect(math.isNegativeInf(atanh_32(-1)));
+    try expect(math.isSignalNan(atanh_32(1.5)));
+    try expect(math.isSignalNan(atanh_32(-1.5)));
+    try expect(math.isNan(atanh_32(math.nan(f32))));
 }
 
 test "math.atanh64.special" {
-    expect(math.isPositiveInf(atanh_64(1)));
-    expect(math.isNegativeInf(atanh_64(-1)));
-    expect(math.isSignalNan(atanh_64(1.5)));
-    expect(math.isSignalNan(atanh_64(-1.5)));
-    expect(math.isNan(atanh_64(math.nan(f64))));
+    try expect(math.isPositiveInf(atanh_64(1)));
+    try expect(math.isNegativeInf(atanh_64(-1)));
+    try expect(math.isSignalNan(atanh_64(1.5)));
+    try expect(math.isSignalNan(atanh_64(-1.5)));
+    try expect(math.isNan(atanh_64(math.nan(f64))));
 }

@@ -152,7 +152,7 @@ pub fn WriteStream(comptime OutStream: type, comptime max_depth: usize) type {
             self: *Self,
             /// An integer, float, or `std.math.BigInt`. Emitted as a bare number if it fits losslessly
             /// in a IEEE 754 double float, otherwise emitted as a string to the full precision.
-            value: var,
+            value: anytype,
         ) !void {
             assert(self.state[self.state_index] == State.Value);
             switch (@typeInfo(@TypeOf(value))) {
@@ -162,7 +162,7 @@ pub fn WriteStream(comptime OutStream: type, comptime max_depth: usize) type {
                         self.popState();
                         return;
                     }
-                    if (value < 4503599627370496 and (!info.is_signed or value > -4503599627370496)) {
+                    if (value < 4503599627370496 and (info.signedness == .unsigned or value > -4503599627370496)) {
                         try self.stream.print("{}", .{value});
                         self.popState();
                         return;
@@ -215,7 +215,7 @@ pub fn WriteStream(comptime OutStream: type, comptime max_depth: usize) type {
             self.state_index -= 1;
         }
 
-        fn stringify(self: *Self, value: var) !void {
+        fn stringify(self: *Self, value: anytype) !void {
             try std.json.stringify(value, std.json.StringifyOptions{
                 .whitespace = self.whitespace,
             }, self.stream);
@@ -224,7 +224,7 @@ pub fn WriteStream(comptime OutStream: type, comptime max_depth: usize) type {
 }
 
 pub fn writeStream(
-    out_stream: var,
+    out_stream: anytype,
     comptime max_depth: usize,
 ) WriteStream(@TypeOf(out_stream), max_depth) {
     return WriteStream(@TypeOf(out_stream), max_depth).init(out_stream);
@@ -233,7 +233,7 @@ pub fn writeStream(
 test "json write stream" {
     var out_buf: [1024]u8 = undefined;
     var slice_stream = std.io.fixedBufferStream(&out_buf);
-    const out = slice_stream.outStream();
+    const out = slice_stream.writer();
 
     var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_allocator.deinit();
@@ -283,12 +283,12 @@ test "json write stream" {
         \\ "float": 3.5e+00
         \\}
     ;
-    std.testing.expect(std.mem.eql(u8, expected, result));
+    try std.testing.expect(std.mem.eql(u8, expected, result));
 }
 
 fn getJsonObject(allocator: *std.mem.Allocator) !std.json.Value {
     var value = std.json.Value{ .Object = std.json.ObjectMap.init(allocator) };
-    _ = try value.Object.put("one", std.json.Value{ .Integer = @intCast(i64, 1) });
-    _ = try value.Object.put("two", std.json.Value{ .Float = 2.0 });
+    try value.Object.put("one", std.json.Value{ .Integer = @intCast(i64, 1) });
+    try value.Object.put("two", std.json.Value{ .Float = 2.0 });
     return value;
 }

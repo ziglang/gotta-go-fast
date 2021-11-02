@@ -7,10 +7,9 @@ const builtin = @import("builtin");
 
 pub fn __divdf3(a: f64, b: f64) callconv(.C) f64 {
     @setRuntimeSafety(builtin.is_test);
-    const Z = std.meta.Int(false, f64.bit_count);
-    const SignedZ = std.meta.Int(true, f64.bit_count);
+    const Z = std.meta.Int(.unsigned, 64);
+    const SignedZ = std.meta.Int(.signed, 64);
 
-    const typeWidth = f64.bit_count;
     const significandBits = std.math.floatMantissaBits(f64);
     const exponentBits = std.math.floatExponentBits(f64);
 
@@ -312,9 +311,9 @@ pub fn wideMultiply(comptime Z: type, a: Z, b: Z, hi: *Z, lo: *Z) void {
     }
 }
 
-pub fn normalize(comptime T: type, significand: *std.meta.Int(false, T.bit_count)) i32 {
+pub fn normalize(comptime T: type, significand: *std.meta.Int(.unsigned, @typeInfo(T).Float.bits)) i32 {
     @setRuntimeSafety(builtin.is_test);
-    const Z = std.meta.Int(false, T.bit_count);
+    const Z = std.meta.Int(.unsigned, @typeInfo(T).Float.bits);
     const significandBits = std.math.floatMantissaBits(T);
     const implicitBit = @as(Z, 1) << significandBits;
 
@@ -328,6 +327,6 @@ pub fn __aeabi_ddiv(a: f64, b: f64) callconv(.AAPCS) f64 {
     return @call(.{ .modifier = .always_inline }, __divdf3, .{ a, b });
 }
 
-test "import divdf3" {
+test {
     _ = @import("divdf3_test.zig");
 }

@@ -1,5 +1,5 @@
 const std = @import("std.zig");
-const builtin = std.builtin;
+const builtin = @import("builtin");
 const math = std.math;
 const mem = std.mem;
 const io = std.io;
@@ -16,26 +16,13 @@ const root = @import("root");
 const maxInt = std.math.maxInt;
 const File = std.fs.File;
 const windows = std.os.windows;
-
-pub const leb = @import("debug/leb128.zig");
-
-pub const global_allocator = @compileError("Please switch to std.testing.allocator.");
-pub const failing_allocator = @compileError("Please switch to std.testing.failing_allocator.");
+const native_arch = builtin.cpu.arch;
+const native_os = builtin.os.tag;
+const native_endian = native_arch.endian();
 
 pub const runtime_safety = switch (builtin.mode) {
     .Debug, .ReleaseSafe => true,
     .ReleaseFast, .ReleaseSmall => false,
-};
-
-const Module = struct {
-    mod_info: pdb.ModInfo,
-    module_name: []u8,
-    obj_file_name: []u8,
-
-    populated: bool,
-    symbols: []u8,
-    subsect_info: []u8,
-    checksum_offset: ?usize,
 };
 
 pub const LineInfo = struct {
@@ -44,40 +31,44 @@ pub const LineInfo = struct {
     file_name: []const u8,
     allocator: ?*mem.Allocator,
 
-    fn deinit(self: LineInfo) void {
+    pub fn deinit(self: LineInfo) void {
         const allocator = self.allocator orelse return;
         allocator.free(self.file_name);
     }
 };
 
-/// Tries to write to stderr, unbuffered, and ignores any error returned.
-/// Does not append a newline.
-var stderr_file: File = undefined;
-var stderr_file_out_stream: File.OutStream = undefined;
+pub const SymbolInfo = struct {
+    symbol_name: []const u8 = "???",
+    compile_unit_name: []const u8 = "???",
+    line_info: ?LineInfo = null,
 
-var stderr_stream: ?*File.OutStream = null;
-var stderr_mutex = std.Mutex.init();
+    pub fn deinit(self: @This()) void {
+        if (self.line_info) |li| {
+            li.deinit();
+        }
+    }
+};
+const PdbOrDwarf = union(enum) {
+    pdb: pdb.Pdb,
+    dwarf: DW.DwarfInfo,
+};
 
-pub fn warn(comptime fmt: []const u8, args: var) void {
+var stderr_mutex = std.Thread.Mutex{};
+
+/// Deprecated. Use `std.log` functions for logging or `std.debug.print` for
+/// "printf debugging".
+pub const warn = print;
+
+/// Print to stderr, unbuffered, and silently returning on failure. Intended
+/// for use in "printf debugging." Use `std.log` functions for proper logging.
+pub fn print(comptime fmt: []const u8, args: anytype) void {
     const held = stderr_mutex.acquire();
     defer held.release();
-    const stderr = getStderrStream();
+    const stderr = io.getStdErr().writer();
     nosuspend stderr.print(fmt, args) catch return;
 }
 
-pub fn getStderrStream() *File.OutStream {
-    if (stderr_stream) |st| {
-        return st;
-    } else {
-        stderr_file = io.getStdErr();
-        stderr_file_out_stream = stderr_file.outStream();
-        const st = &stderr_file_out_stream;
-        stderr_stream = st;
-        return st;
-    }
-}
-
-pub fn getStderrMutex() *std.Mutex {
+pub fn getStderrMutex() *std.Thread.Mutex {
     return &stderr_mutex;
 }
 
@@ -94,14 +85,15 @@ pub fn getSelfDebugInfo() !*DebugInfo {
 }
 
 pub fn detectTTYConfig() TTY.Config {
-    var bytes: [128]u8 = undefined;
-    const allocator = &std.heap.FixedBufferAllocator.init(bytes[0..]).allocator;
-    if (process.getEnvVarOwned(allocator, "ZIG_DEBUG_COLOR")) |_| {
+    if (process.hasEnvVarConstant("ZIG_DEBUG_COLOR")) {
         return .escape_codes;
-    } else |_| {
+    } else if (process.hasEnvVarConstant("NO_COLOR")) {
+        return .no_color;
+    } else {
+        const stderr_file = io.getStdErr();
         if (stderr_file.supportsAnsiEscapeCodes()) {
             return .escape_codes;
-        } else if (builtin.os.tag == .windows and stderr_file.isTty()) {
+        } else if (native_os == .windows and stderr_file.isTty()) {
             return .windows_api;
         } else {
             return .no_color;
@@ -113,17 +105,17 @@ pub fn detectTTYConfig() TTY.Config {
 /// TODO multithreaded awareness
 pub fn dumpCurrentStackTrace(start_addr: ?usize) void {
     nosuspend {
-        const stderr = getStderrStream();
+        const stderr = io.getStdErr().writer();
         if (builtin.strip_debug_info) {
             stderr.print("Unable to dump stack trace: debug info stripped\n", .{}) catch return;
             return;
         }
         const debug_info = getSelfDebugInfo() catch |err| {
-            stderr.print("Unable to dump stack trace: Unable to open debug info: {}\n", .{@errorName(err)}) catch return;
+            stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
             return;
         };
         writeCurrentStackTrace(stderr, debug_info, detectTTYConfig(), start_addr) catch |err| {
-            stderr.print("Unable to dump stack trace: {}\n", .{@errorName(err)}) catch return;
+            stderr.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch return;
             return;
         };
     }
@@ -134,13 +126,13 @@ pub fn dumpCurrentStackTrace(start_addr: ?usize) void {
 /// TODO multithreaded awareness
 pub fn dumpStackTraceFromBase(bp: usize, ip: usize) void {
     nosuspend {
-        const stderr = getStderrStream();
+        const stderr = io.getStdErr().writer();
         if (builtin.strip_debug_info) {
             stderr.print("Unable to dump stack trace: debug info stripped\n", .{}) catch return;
             return;
         }
         const debug_info = getSelfDebugInfo() catch |err| {
-            stderr.print("Unable to dump stack trace: Unable to open debug info: {}\n", .{@errorName(err)}) catch return;
+            stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
             return;
         };
         const tty_config = detectTTYConfig();
@@ -158,8 +150,8 @@ pub fn dumpStackTraceFromBase(bp: usize, ip: usize) void {
 /// capture that many stack frames exactly, and then look for the first address,
 /// chopping off the irrelevant frames and shifting so that the returned addresses pointer
 /// equals the passed in addresses pointer.
-pub fn captureStackTrace(first_address: ?usize, stack_trace: *builtin.StackTrace) void {
-    if (builtin.os.tag == .windows) {
+pub fn captureStackTrace(first_address: ?usize, stack_trace: *std.builtin.StackTrace) void {
+    if (native_os == .windows) {
         const addrs = stack_trace.instruction_addresses;
         const u32_addrs_len = @intCast(u32, addrs.len);
         const first_addr = first_address orelse {
@@ -202,19 +194,19 @@ pub fn captureStackTrace(first_address: ?usize, stack_trace: *builtin.StackTrace
 
 /// Tries to print a stack trace to stderr, unbuffered, and ignores any error returned.
 /// TODO multithreaded awareness
-pub fn dumpStackTrace(stack_trace: builtin.StackTrace) void {
+pub fn dumpStackTrace(stack_trace: std.builtin.StackTrace) void {
     nosuspend {
-        const stderr = getStderrStream();
+        const stderr = io.getStdErr().writer();
         if (builtin.strip_debug_info) {
             stderr.print("Unable to dump stack trace: debug info stripped\n", .{}) catch return;
             return;
         }
         const debug_info = getSelfDebugInfo() catch |err| {
-            stderr.print("Unable to dump stack trace: Unable to open debug info: {}\n", .{@errorName(err)}) catch return;
+            stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
             return;
         };
         writeStackTrace(stack_trace, stderr, getDebugInfoAllocator(), debug_info, detectTTYConfig()) catch |err| {
-            stderr.print("Unable to dump stack trace: {}\n", .{@errorName(err)}) catch return;
+            stderr.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch return;
             return;
         };
     }
@@ -234,11 +226,34 @@ pub fn assert(ok: bool) void {
     if (!ok) unreachable; // assertion failure
 }
 
-pub fn panic(comptime format: []const u8, args: var) noreturn {
+pub fn panic(comptime format: []const u8, args: anytype) noreturn {
     @setCold(true);
-    // TODO: remove conditional once wasi / LLVM defines __builtin_return_address
-    const first_trace_addr = if (builtin.os.tag == .wasi) null else @returnAddress();
-    panicExtra(null, first_trace_addr, format, args);
+
+    panicExtra(null, format, args);
+}
+
+/// `panicExtra` is useful when you want to print out an `@errorReturnTrace`
+/// and also print out some values.
+pub fn panicExtra(
+    trace: ?*std.builtin.StackTrace,
+    comptime format: []const u8,
+    args: anytype,
+) noreturn {
+    @setCold(true);
+
+    const size = 0x1000;
+    const trunc_msg = "(msg truncated)";
+    var buf: [size + trunc_msg.len]u8 = undefined;
+    // a minor annoyance with this is that it will result in the NoSpaceLeft
+    // error being part of the @panic stack trace (but that error should
+    // only happen rarely)
+    const msg = std.fmt.bufPrint(buf[0..size], format, args) catch |err| switch (err) {
+        std.fmt.BufPrintError.NoSpaceLeft => blk: {
+            std.mem.copy(u8, buf[size..], trunc_msg);
+            break :blk &buf;
+        },
+    };
+    std.builtin.panic(msg, trace);
 }
 
 /// Non-zero whenever the program triggered a panic.
@@ -246,13 +261,15 @@ pub fn panic(comptime format: []const u8, args: var) noreturn {
 var panicking: u8 = 0;
 
 // Locked to avoid interleaving panic messages from multiple threads.
-var panic_mutex = std.Mutex.init();
+var panic_mutex = std.Thread.Mutex{};
 
 /// Counts how many times the panic handler is invoked by this thread.
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
-pub fn panicExtra(trace: ?*const builtin.StackTrace, first_trace_addr: ?usize, comptime format: []const u8, args: var) noreturn {
+// `panicImpl` could be useful in implementing a custom panic handler which
+// calls the default handler (on supported platforms)
+pub fn panicImpl(trace: ?*const std.builtin.StackTrace, first_trace_addr: ?usize, msg: []const u8) noreturn {
     @setCold(true);
 
     if (enable_segfault_handler) {
@@ -272,8 +289,14 @@ pub fn panicExtra(trace: ?*const builtin.StackTrace, first_trace_addr: ?usize, c
                 const held = panic_mutex.acquire();
                 defer held.release();
 
-                const stderr = getStderrStream();
-                stderr.print(format ++ "\n", args) catch os.abort();
+                const stderr = io.getStdErr().writer();
+                if (builtin.single_threaded) {
+                    stderr.print("panic: ", .{}) catch os.abort();
+                } else {
+                    const current_thread_id = std.Thread.getCurrentId();
+                    stderr.print("thread {} panic: ", .{current_thread_id}) catch os.abort();
+                }
+                stderr.print("{s}\n", .{msg}) catch os.abort();
                 if (trace) |t| {
                     dumpStackTrace(t.*);
                 }
@@ -285,9 +308,8 @@ pub fn panicExtra(trace: ?*const builtin.StackTrace, first_trace_addr: ?usize, c
                 // and call abort()
 
                 // Sleep forever without hammering the CPU
-                var event = std.ResetEvent.init();
+                var event: std.Thread.StaticResetEvent = .{};
                 event.wait();
-
                 unreachable;
             }
         },
@@ -297,7 +319,7 @@ pub fn panicExtra(trace: ?*const builtin.StackTrace, first_trace_addr: ?usize, c
             // A panic happened while trying to print a previous panic message,
             // we're still holding the mutex but that's fine as we're going to
             // call abort()
-            const stderr = getStderrStream();
+            const stderr = io.getStdErr().writer();
             stderr.print("Panicked during a panic. Aborting.\n", .{}) catch os.abort();
         },
         else => {
@@ -312,16 +334,18 @@ const RED = "\x1b[31;1m";
 const GREEN = "\x1b[32;1m";
 const CYAN = "\x1b[36;1m";
 const WHITE = "\x1b[37;1m";
+const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 
 pub fn writeStackTrace(
-    stack_trace: builtin.StackTrace,
-    out_stream: var,
+    stack_trace: std.builtin.StackTrace,
+    out_stream: anytype,
     allocator: *mem.Allocator,
     debug_info: *DebugInfo,
     tty_config: TTY.Config,
 ) !void {
+    _ = allocator;
     if (builtin.strip_debug_info) return error.MissingDebugInfo;
     var frame_index: usize = 0;
     var frames_left: usize = std.math.min(stack_trace.index, stack_trace.instruction_addresses.len);
@@ -336,26 +360,48 @@ pub fn writeStackTrace(
 }
 
 pub const StackIterator = struct {
-    // Skip every frame before this address is found
+    // Skip every frame before this address is found.
     first_address: ?usize,
-    // Last known value of the frame pointer register
+    // Last known value of the frame pointer register.
     fp: usize,
 
     pub fn init(first_address: ?usize, fp: ?usize) StackIterator {
+        if (native_arch == .sparcv9) {
+            // Flush all the register windows on stack.
+            asm volatile (
+                \\ flushw
+                ::: "memory");
+        }
+
         return StackIterator{
             .first_address = first_address,
             .fp = fp orelse @frameAddress(),
         };
     }
 
-    // On some architectures such as x86 the frame pointer is the address where
-    // the previous fp is stored, while on some other architectures such as
-    // RISC-V it points to the "top" of the frame, just above where the previous
-    // fp and the return address are stored.
-    const fp_offset = if (builtin.arch.isRISCV())
+    // Offset of the saved BP wrt the frame pointer.
+    const fp_offset = if (native_arch.isRISCV())
+        // On RISC-V the frame pointer points to the top of the saved register
+        // area, on pretty much every other architecture it points to the stack
+        // slot where the previous frame pointer is saved.
         2 * @sizeOf(usize)
+    else if (native_arch.isSPARC())
+        // On SPARC the previous frame pointer is stored at 14 slots past %fp+BIAS.
+        14 * @sizeOf(usize)
     else
         0;
+
+    const fp_bias = if (native_arch.isSPARC())
+        // On SPARC frame pointers are biased by a constant.
+        2047
+    else
+        0;
+
+    // Positive offset of the saved PC wrt the frame pointer.
+    const pc_offset = if (native_arch == .powerpc64le)
+        2 * @sizeOf(usize)
+    else
+        @sizeOf(usize);
 
     pub fn next(self: *StackIterator) ?usize {
         var address = self.next_internal() orelse return null;
@@ -371,22 +417,29 @@ pub const StackIterator = struct {
     }
 
     fn next_internal(self: *StackIterator) ?usize {
-        const fp = math.sub(usize, self.fp, fp_offset) catch return null;
+        const fp = if (comptime native_arch.isSPARC())
+            // On SPARC the offset is positive. (!)
+            math.add(usize, self.fp, fp_offset) catch return null
+        else
+            math.sub(usize, self.fp, fp_offset) catch return null;
 
-        // Sanity check
+        // Sanity check.
         if (fp == 0 or !mem.isAligned(fp, @alignOf(usize)))
             return null;
 
-        const new_fp = @intToPtr(*const usize, fp).*;
+        const new_fp = math.add(usize, @intToPtr(*const usize, fp).*, fp_bias) catch return null;
 
         // Sanity check: the stack grows down thus all the parent frames must be
         // be at addresses that are greater (or equal) than the previous one.
         // A zero frame pointer often signals this is the last frame, that case
-        // is gracefully handled by the next call to next_internal
+        // is gracefully handled by the next call to next_internal.
         if (new_fp != 0 and new_fp < self.fp)
             return null;
 
-        const new_pc = @intToPtr(*const usize, fp + @sizeOf(usize)).*;
+        const new_pc = @intToPtr(
+            *const usize,
+            math.add(usize, fp, pc_offset) catch return null,
+        ).*;
 
         self.fp = new_fp;
 
@@ -395,22 +448,27 @@ pub const StackIterator = struct {
 };
 
 pub fn writeCurrentStackTrace(
-    out_stream: var,
+    out_stream: anytype,
     debug_info: *DebugInfo,
     tty_config: TTY.Config,
     start_addr: ?usize,
 ) !void {
-    if (builtin.os.tag == .windows) {
+    if (native_os == .windows) {
         return writeCurrentStackTraceWindows(out_stream, debug_info, tty_config, start_addr);
     }
     var it = StackIterator.init(start_addr, null);
     while (it.next()) |return_address| {
-        try printSourceAtAddress(debug_info, out_stream, return_address - 1, tty_config);
+        // On arm64 macOS, the address of the last frame is 0x0 rather than 0x1 as on x86_64 macOS,
+        // therefore, we do a check for `return_address == 0` before subtracting 1 from it to avoid
+        // an overflow. We do not need to signal `StackIterator` as it will correctly detect this
+        // condition on the subsequent iteration and return `null` thus terminating the loop.
+        const address = if (return_address == 0) return_address else return_address - 1;
+        try printSourceAtAddress(debug_info, out_stream, address, tty_config);
     }
 }
 
 pub fn writeCurrentStackTraceWindows(
-    out_stream: var,
+    out_stream: anytype,
     debug_info: *DebugInfo,
     tty_config: TTY.Config,
     start_addr: ?usize,
@@ -446,18 +504,20 @@ pub const TTY = struct {
         // TODO give this a payload of file handle
         windows_api,
 
-        fn setColor(conf: Config, out_stream: var, color: Color) void {
+        pub fn setColor(conf: Config, out_stream: anytype, color: Color) void {
             nosuspend switch (conf) {
                 .no_color => return,
                 .escape_codes => switch (color) {
                     .Red => out_stream.writeAll(RED) catch return,
                     .Green => out_stream.writeAll(GREEN) catch return,
                     .Cyan => out_stream.writeAll(CYAN) catch return,
-                    .White, .Bold => out_stream.writeAll(WHITE) catch return,
+                    .White => out_stream.writeAll(WHITE) catch return,
                     .Dim => out_stream.writeAll(DIM) catch return,
+                    .Bold => out_stream.writeAll(BOLD) catch return,
                     .Reset => out_stream.writeAll(RESET) catch return,
                 },
-                .windows_api => if (builtin.os.tag == .windows) {
+                .windows_api => if (native_os == .windows) {
+                    const stderr_file = io.getStdErr();
                     const S = struct {
                         var attrs: windows.WORD = undefined;
                         var init_attrs = false;
@@ -499,53 +559,6 @@ pub const TTY = struct {
     };
 };
 
-/// TODO resources https://github.com/ziglang/zig/issues/4353
-fn populateModule(di: *ModuleDebugInfo, mod: *Module) !void {
-    if (mod.populated)
-        return;
-    const allocator = getDebugInfoAllocator();
-
-    // At most one can be non-zero.
-    if (mod.mod_info.C11ByteSize != 0 and mod.mod_info.C13ByteSize != 0)
-        return error.InvalidDebugInfo;
-
-    if (mod.mod_info.C13ByteSize == 0)
-        return;
-
-    const modi = di.pdb.getStreamById(mod.mod_info.ModuleSymStream) orelse return error.MissingDebugInfo;
-
-    const signature = try modi.inStream().readIntLittle(u32);
-    if (signature != 4)
-        return error.InvalidDebugInfo;
-
-    mod.symbols = try allocator.alloc(u8, mod.mod_info.SymByteSize - 4);
-    try modi.inStream().readNoEof(mod.symbols);
-
-    mod.subsect_info = try allocator.alloc(u8, mod.mod_info.C13ByteSize);
-    try modi.inStream().readNoEof(mod.subsect_info);
-
-    var sect_offset: usize = 0;
-    var skip_len: usize = undefined;
-    while (sect_offset != mod.subsect_info.len) : (sect_offset += skip_len) {
-        const subsect_hdr = @ptrCast(*pdb.DebugSubsectionHeader, &mod.subsect_info[sect_offset]);
-        skip_len = subsect_hdr.Length;
-        sect_offset += @sizeOf(pdb.DebugSubsectionHeader);
-
-        switch (subsect_hdr.Kind) {
-            .FileChecksums => {
-                mod.checksum_offset = sect_offset;
-                break;
-            },
-            else => {},
-        }
-
-        if (sect_offset > mod.subsect_info.len)
-            return error.InvalidDebugInfo;
-    }
-
-    mod.populated = true;
-}
-
 fn machoSearchSymbols(symbols: []const MachoSymbol, address: usize) ?*const MachoSymbol {
     var min: usize = 0;
     var max: usize = symbols.len - 1; // Exclude sentinel.
@@ -565,7 +578,7 @@ fn machoSearchSymbols(symbols: []const MachoSymbol, address: usize) ?*const Mach
 }
 
 /// TODO resources https://github.com/ziglang/zig/issues/4353
-pub fn printSourceAtAddress(debug_info: *DebugInfo, out_stream: var, address: usize, tty_config: TTY.Config) !void {
+pub fn printSourceAtAddress(debug_info: *DebugInfo, out_stream: anytype, address: usize, tty_config: TTY.Config) !void {
     const module = debug_info.getModuleForAddress(address) catch |err| switch (err) {
         error.MissingDebugInfo, error.InvalidDebugInfo => {
             return printLineInfo(
@@ -596,19 +609,19 @@ pub fn printSourceAtAddress(debug_info: *DebugInfo, out_stream: var, address: us
 }
 
 fn printLineInfo(
-    out_stream: var,
+    out_stream: anytype,
     line_info: ?LineInfo,
     address: usize,
     symbol_name: []const u8,
     compile_unit_name: []const u8,
     tty_config: TTY.Config,
-    comptime printLineFromFile: var,
+    comptime printLineFromFile: anytype,
 ) !void {
     nosuspend {
-        tty_config.setColor(out_stream, .White);
+        tty_config.setColor(out_stream, .Bold);
 
         if (line_info) |*li| {
-            try out_stream.print("{}:{}:{}", .{ li.file_name, li.line, li.column });
+            try out_stream.print("{s}:{d}:{d}", .{ li.file_name, li.line, li.column });
         } else {
             try out_stream.writeAll("???:?:?");
         }
@@ -616,7 +629,7 @@ fn printLineInfo(
         tty_config.setColor(out_stream, .Reset);
         try out_stream.writeAll(": ");
         tty_config.setColor(out_stream, .Dim);
-        try out_stream.print("0x{x} in {} ({})", .{ address, symbol_name, compile_unit_name });
+        try out_stream.print("0x{x} in {s} ({s})", .{ address, symbol_name, compile_unit_name });
         tty_config.setColor(out_stream, .Reset);
         try out_stream.writeAll("\n");
 
@@ -636,6 +649,7 @@ fn printLineInfo(
             } else |err| switch (err) {
                 error.EndOfFile, error.FileNotFound => {},
                 error.BadPathName => {},
+                error.AccessDenied => {},
                 else => return err,
             }
         }
@@ -657,23 +671,27 @@ pub fn openSelfDebugInfo(allocator: *mem.Allocator) anyerror!DebugInfo {
         if (@hasDecl(root, "os") and @hasDecl(root.os, "debug") and @hasDecl(root.os.debug, "openSelfDebugInfo")) {
             return root.os.debug.openSelfDebugInfo(allocator);
         }
-        switch (builtin.os.tag) {
+        switch (native_os) {
             .linux,
             .freebsd,
             .netbsd,
             .dragonfly,
-            .macosx,
+            .openbsd,
+            .macos,
             .windows,
+            .solaris,
             => return DebugInfo.init(allocator),
-            else => @compileError("openSelfDebugInfo unsupported for this platform"),
+            else => return error.UnsupportedDebugInfo,
         }
     }
 }
 
+/// This takes ownership of coff_file: users of this function should not close
+/// it themselves, even on error.
 /// TODO resources https://github.com/ziglang/zig/issues/4353
-fn openCoffDebugInfo(allocator: *mem.Allocator, coff_file_path: [:0]const u16) !ModuleDebugInfo {
+/// TODO it's weird to take ownership even on error, rework this code.
+fn readCoffDebugInfo(allocator: *mem.Allocator, coff_file: File) !ModuleDebugInfo {
     nosuspend {
-        const coff_file = try std.fs.openFileAbsoluteW(coff_file_path, .{ .intended_io_mode = .blocking });
         errdefer coff_file.close();
 
         const coff_obj = try allocator.create(coff.Coff);
@@ -682,167 +700,51 @@ fn openCoffDebugInfo(allocator: *mem.Allocator, coff_file_path: [:0]const u16) !
         var di = ModuleDebugInfo{
             .base_address = undefined,
             .coff = coff_obj,
-            .pdb = undefined,
-            .sect_contribs = undefined,
-            .modules = undefined,
+            .debug_data = undefined,
         };
 
         try di.coff.loadHeader();
+        try di.coff.loadSections();
+        if (di.coff.getSection(".debug_info")) |sec| {
+            // This coff file has embedded DWARF debug info
+            _ = sec;
+            // TODO: free the section data slices
+            const debug_info_data = di.coff.getSectionData(".debug_info", allocator) catch null;
+            const debug_abbrev_data = di.coff.getSectionData(".debug_abbrev", allocator) catch null;
+            const debug_str_data = di.coff.getSectionData(".debug_str", allocator) catch null;
+            const debug_line_data = di.coff.getSectionData(".debug_line", allocator) catch null;
+            const debug_ranges_data = di.coff.getSectionData(".debug_ranges", allocator) catch null;
+
+            var dwarf = DW.DwarfInfo{
+                .endian = native_endian,
+                .debug_info = debug_info_data orelse return error.MissingDebugInfo,
+                .debug_abbrev = debug_abbrev_data orelse return error.MissingDebugInfo,
+                .debug_str = debug_str_data orelse return error.MissingDebugInfo,
+                .debug_line = debug_line_data orelse return error.MissingDebugInfo,
+                .debug_ranges = debug_ranges_data,
+            };
+            try DW.openDwarfDebugInfo(&dwarf, allocator);
+            di.debug_data = PdbOrDwarf{ .dwarf = dwarf };
+            return di;
+        }
 
         var path_buf: [windows.MAX_PATH]u8 = undefined;
         const len = try di.coff.getPdbPath(path_buf[0..]);
         const raw_path = path_buf[0..len];
 
         const path = try fs.path.resolve(allocator, &[_][]const u8{raw_path});
+        defer allocator.free(path);
 
-        try di.pdb.openFile(di.coff, path);
+        di.debug_data = PdbOrDwarf{ .pdb = undefined };
+        di.debug_data.pdb = try pdb.Pdb.init(allocator, path);
+        try di.debug_data.pdb.parseInfoStream();
+        try di.debug_data.pdb.parseDbiStream();
 
-        var pdb_stream = di.pdb.getStream(pdb.StreamType.Pdb) orelse return error.InvalidDebugInfo;
-        const version = try pdb_stream.inStream().readIntLittle(u32);
-        const signature = try pdb_stream.inStream().readIntLittle(u32);
-        const age = try pdb_stream.inStream().readIntLittle(u32);
-        var guid: [16]u8 = undefined;
-        try pdb_stream.inStream().readNoEof(&guid);
-        if (version != 20000404) // VC70, only value observed by LLVM team
-            return error.UnknownPDBVersion;
-        if (!mem.eql(u8, &di.coff.guid, &guid) or di.coff.age != age)
-            return error.PDBMismatch;
-        // We validated the executable and pdb match.
-
-        const string_table_index = str_tab_index: {
-            const name_bytes_len = try pdb_stream.inStream().readIntLittle(u32);
-            const name_bytes = try allocator.alloc(u8, name_bytes_len);
-            try pdb_stream.inStream().readNoEof(name_bytes);
-
-            const HashTableHeader = packed struct {
-                Size: u32,
-                Capacity: u32,
-
-                fn maxLoad(cap: u32) u32 {
-                    return cap * 2 / 3 + 1;
-                }
-            };
-            const hash_tbl_hdr = try pdb_stream.inStream().readStruct(HashTableHeader);
-            if (hash_tbl_hdr.Capacity == 0)
-                return error.InvalidDebugInfo;
-
-            if (hash_tbl_hdr.Size > HashTableHeader.maxLoad(hash_tbl_hdr.Capacity))
-                return error.InvalidDebugInfo;
-
-            const present = try readSparseBitVector(&pdb_stream.inStream(), allocator);
-            if (present.len != hash_tbl_hdr.Size)
-                return error.InvalidDebugInfo;
-            const deleted = try readSparseBitVector(&pdb_stream.inStream(), allocator);
-
-            const Bucket = struct {
-                first: u32,
-                second: u32,
-            };
-            const bucket_list = try allocator.alloc(Bucket, present.len);
-            for (present) |_| {
-                const name_offset = try pdb_stream.inStream().readIntLittle(u32);
-                const name_index = try pdb_stream.inStream().readIntLittle(u32);
-                const name = mem.spanZ(@ptrCast([*:0]u8, name_bytes.ptr + name_offset));
-                if (mem.eql(u8, name, "/names")) {
-                    break :str_tab_index name_index;
-                }
-            }
-            return error.MissingDebugInfo;
-        };
-
-        di.pdb.string_table = di.pdb.getStreamById(string_table_index) orelse return error.MissingDebugInfo;
-        di.pdb.dbi = di.pdb.getStream(pdb.StreamType.Dbi) orelse return error.MissingDebugInfo;
-
-        const dbi = di.pdb.dbi;
-
-        // Dbi Header
-        const dbi_stream_header = try dbi.inStream().readStruct(pdb.DbiStreamHeader);
-        if (dbi_stream_header.VersionHeader != 19990903) // V70, only value observed by LLVM team
-            return error.UnknownPDBVersion;
-        if (dbi_stream_header.Age != age)
-            return error.UnmatchingPDB;
-
-        const mod_info_size = dbi_stream_header.ModInfoSize;
-        const section_contrib_size = dbi_stream_header.SectionContributionSize;
-
-        var modules = ArrayList(Module).init(allocator);
-
-        // Module Info Substream
-        var mod_info_offset: usize = 0;
-        while (mod_info_offset != mod_info_size) {
-            const mod_info = try dbi.inStream().readStruct(pdb.ModInfo);
-            var this_record_len: usize = @sizeOf(pdb.ModInfo);
-
-            const module_name = try dbi.readNullTermString(allocator);
-            this_record_len += module_name.len + 1;
-
-            const obj_file_name = try dbi.readNullTermString(allocator);
-            this_record_len += obj_file_name.len + 1;
-
-            if (this_record_len % 4 != 0) {
-                const round_to_next_4 = (this_record_len | 0x3) + 1;
-                const march_forward_bytes = round_to_next_4 - this_record_len;
-                try dbi.seekBy(@intCast(isize, march_forward_bytes));
-                this_record_len += march_forward_bytes;
-            }
-
-            try modules.append(Module{
-                .mod_info = mod_info,
-                .module_name = module_name,
-                .obj_file_name = obj_file_name,
-
-                .populated = false,
-                .symbols = undefined,
-                .subsect_info = undefined,
-                .checksum_offset = null,
-            });
-
-            mod_info_offset += this_record_len;
-            if (mod_info_offset > mod_info_size)
-                return error.InvalidDebugInfo;
-        }
-
-        di.modules = modules.toOwnedSlice();
-
-        // Section Contribution Substream
-        var sect_contribs = ArrayList(pdb.SectionContribEntry).init(allocator);
-        var sect_cont_offset: usize = 0;
-        if (section_contrib_size != 0) {
-            const ver = @intToEnum(pdb.SectionContrSubstreamVersion, try dbi.inStream().readIntLittle(u32));
-            if (ver != pdb.SectionContrSubstreamVersion.Ver60)
-                return error.InvalidDebugInfo;
-            sect_cont_offset += @sizeOf(u32);
-        }
-        while (sect_cont_offset != section_contrib_size) {
-            const entry = try sect_contribs.addOne();
-            entry.* = try dbi.inStream().readStruct(pdb.SectionContribEntry);
-            sect_cont_offset += @sizeOf(pdb.SectionContribEntry);
-
-            if (sect_cont_offset > section_contrib_size)
-                return error.InvalidDebugInfo;
-        }
-
-        di.sect_contribs = sect_contribs.toOwnedSlice();
+        if (!mem.eql(u8, &di.coff.guid, &di.debug_data.pdb.guid) or di.coff.age != di.debug_data.pdb.age)
+            return error.InvalidDebugInfo;
 
         return di;
     }
-}
-
-fn readSparseBitVector(stream: var, allocator: *mem.Allocator) ![]usize {
-    const num_words = try stream.readIntLittle(u32);
-    var word_i: usize = 0;
-    var list = ArrayList(usize).init(allocator);
-    while (word_i != num_words) : (word_i += 1) {
-        const word = try stream.readIntLittle(u32);
-        var bit_i: u5 = 0;
-        while (true) : (bit_i += 1) {
-            if (word & (@as(u32, 1) << bit_i) != 0) {
-                try list.append(word_i * 32 + bit_i);
-            }
-            if (bit_i == maxInt(u5)) break;
-        }
-    }
-    return list.toOwnedSlice();
 }
 
 fn chopSlice(ptr: []const u8, offset: u64, size: u64) ![]const u8 {
@@ -851,20 +753,23 @@ fn chopSlice(ptr: []const u8, offset: u64, size: u64) ![]const u8 {
     return ptr[start..end];
 }
 
+/// This takes ownership of elf_file: users of this function should not close
+/// it themselves, even on error.
 /// TODO resources https://github.com/ziglang/zig/issues/4353
-pub fn openElfDebugInfo(allocator: *mem.Allocator, elf_file_path: []const u8) !ModuleDebugInfo {
+/// TODO it's weird to take ownership even on error, rework this code.
+pub fn readElfDebugInfo(allocator: *mem.Allocator, elf_file: File) !ModuleDebugInfo {
     nosuspend {
-        const mapped_mem = try mapWholeFile(elf_file_path);
+        const mapped_mem = try mapWholeFile(elf_file);
         const hdr = @ptrCast(*const elf.Ehdr, &mapped_mem[0]);
         if (!mem.eql(u8, hdr.e_ident[0..4], "\x7fELF")) return error.InvalidElfMagic;
         if (hdr.e_ident[elf.EI_VERSION] != 1) return error.InvalidElfVersion;
 
-        const endian: builtin.Endian = switch (hdr.e_ident[elf.EI_DATA]) {
+        const endian: std.builtin.Endian = switch (hdr.e_ident[elf.EI_DATA]) {
             elf.ELFDATA2LSB => .Little,
             elf.ELFDATA2MSB => .Big,
             else => return error.InvalidElfEndian,
         };
-        assert(endian == std.builtin.endian); // this is our own debug info
+        assert(endian == native_endian); // this is our own debug info
 
         const shoff = hdr.e_shoff;
         const str_section_off = shoff + @as(u64, hdr.e_shentsize) * @as(u64, hdr.e_shstrndx);
@@ -887,7 +792,7 @@ pub fn openElfDebugInfo(allocator: *mem.Allocator, elf_file_path: []const u8) !M
         for (shdrs) |*shdr| {
             if (shdr.sh_type == elf.SHT_NULL) continue;
 
-            const name = std.mem.span(@ptrCast([*:0]const u8, header_strings[shdr.sh_name..].ptr));
+            const name = std.mem.span(std.meta.assumeSentinel(header_strings[shdr.sh_name..].ptr, 0));
             if (mem.eql(u8, name, ".debug_info")) {
                 opt_debug_info = try chopSlice(mapped_mem, shdr.sh_offset, shdr.sh_size);
             } else if (mem.eql(u8, name, ".debug_abbrev")) {
@@ -921,8 +826,11 @@ pub fn openElfDebugInfo(allocator: *mem.Allocator, elf_file_path: []const u8) !M
 }
 
 /// TODO resources https://github.com/ziglang/zig/issues/4353
-fn openMachODebugInfo(allocator: *mem.Allocator, macho_file_path: []const u8) !ModuleDebugInfo {
-    const mapped_mem = try mapWholeFile(macho_file_path);
+/// This takes ownership of macho_file: users of this function should not close
+/// it themselves, even on error.
+/// TODO it's weird to take ownership even on error, rework this code.
+fn readMachODebugInfo(allocator: *mem.Allocator, macho_file: File) !ModuleDebugInfo {
+    const mapped_mem = try mapWholeFile(macho_file);
 
     const hdr = @ptrCast(
         *const macho.mach_header_64,
@@ -995,7 +903,7 @@ fn openMachODebugInfo(allocator: *mem.Allocator, macho_file_path: []const u8) !M
     // Even though lld emits symbols in ascending order, this debug code
     // should work for programs linked in any valid way.
     // This sort is so that we can binary search later.
-    std.sort.sort(MachoSymbol, symbols, MachoSymbol.addressLessThan);
+    std.sort.sort(MachoSymbol, symbols, {}, MachoSymbol.addressLessThan);
 
     return ModuleDebugInfo{
         .base_address = undefined,
@@ -1006,7 +914,7 @@ fn openMachODebugInfo(allocator: *mem.Allocator, macho_file_path: []const u8) !M
     };
 }
 
-fn printLineFromFileAnyOs(out_stream: var, line_info: LineInfo) !void {
+fn printLineFromFileAnyOs(out_stream: anytype, line_info: LineInfo) !void {
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
     var f = try fs.cwd().openFile(line_info.file_name, .{ .intended_io_mode = .blocking });
@@ -1016,7 +924,6 @@ fn printLineFromFileAnyOs(out_stream: var, line_info: LineInfo) !void {
     var buf: [mem.page_size]u8 = undefined;
     var line: usize = 1;
     var column: usize = 1;
-    var abs_index: usize = 0;
     while (true) {
         const amt_read = try f.read(buf[0..]);
         const slice = buf[0..amt_read];
@@ -1050,22 +957,25 @@ const MachoSymbol = struct {
         return self.nlist.n_value;
     }
 
-    fn addressLessThan(lhs: MachoSymbol, rhs: MachoSymbol) bool {
+    fn addressLessThan(context: void, lhs: MachoSymbol, rhs: MachoSymbol) bool {
+        _ = context;
         return lhs.address() < rhs.address();
     }
 };
 
-fn mapWholeFile(path: []const u8) ![]align(mem.page_size) const u8 {
+/// `file` is expected to have been opened with .intended_io_mode == .blocking.
+/// Takes ownership of file, even on error.
+/// TODO it's weird to take ownership even on error, rework this code.
+fn mapWholeFile(file: File) ![]align(mem.page_size) const u8 {
     nosuspend {
-        const file = try fs.cwd().openFile(path, .{ .intended_io_mode = .blocking });
         defer file.close();
 
         const file_len = try math.cast(usize, try file.getEndPos());
         const mapped_mem = try os.mmap(
             null,
             file_len,
-            os.PROT_READ,
-            os.MAP_SHARED,
+            os.PROT.READ,
+            os.MAP.SHARED,
             file.handle,
             0,
         );
@@ -1092,12 +1002,15 @@ pub const DebugInfo = struct {
     }
 
     pub fn getModuleForAddress(self: *DebugInfo, address: usize) !*ModuleDebugInfo {
-        if (comptime std.Target.current.isDarwin())
-            return self.lookupModuleDyld(address)
-        else if (builtin.os.tag == .windows)
-            return self.lookupModuleWin32(address)
-        else
+        if (comptime builtin.target.isDarwin()) {
+            return self.lookupModuleDyld(address);
+        } else if (native_os == .windows) {
+            return self.lookupModuleWin32(address);
+        } else if (native_os == .haiku) {
+            return self.lookupModuleHaiku(address);
+        } else {
             return self.lookupModuleDl(address);
+        }
     }
 
     fn lookupModuleDyld(self: *DebugInfo, address: usize) !*ModuleDebugInfo {
@@ -1132,7 +1045,7 @@ pub const DebugInfo = struct {
                 const seg_end = seg_start + segment_cmd.vmsize;
 
                 if (rebased_address >= seg_start and rebased_address < seg_end) {
-                    if (self.address_map.getValue(base_address)) |obj_di| {
+                    if (self.address_map.get(base_address)) |obj_di| {
                         return obj_di;
                     }
 
@@ -1140,10 +1053,11 @@ pub const DebugInfo = struct {
                     errdefer self.allocator.destroy(obj_di);
 
                     const macho_path = mem.spanZ(std.c._dyld_get_image_name(i));
-                    obj_di.* = openMachODebugInfo(self.allocator, macho_path) catch |err| switch (err) {
+                    const macho_file = fs.cwd().openFile(macho_path, .{ .intended_io_mode = .blocking }) catch |err| switch (err) {
                         error.FileNotFound => return error.MissingDebugInfo,
                         else => return err,
                     };
+                    obj_di.* = try readMachODebugInfo(self.allocator, macho_file);
                     obj_di.base_address = base_address;
 
                     try self.address_map.putNoClobber(base_address, obj_di);
@@ -1203,7 +1117,7 @@ pub const DebugInfo = struct {
             const seg_end = seg_start + info.SizeOfImage;
 
             if (address >= seg_start and address < seg_end) {
-                if (self.address_map.getValue(seg_start)) |obj_di| {
+                if (self.address_map.get(seg_start)) |obj_di| {
                     return obj_di;
                 }
 
@@ -1221,10 +1135,11 @@ pub const DebugInfo = struct {
                 const obj_di = try self.allocator.create(ModuleDebugInfo);
                 errdefer self.allocator.destroy(obj_di);
 
-                obj_di.* = openCoffDebugInfo(self.allocator, name_buffer[0 .. len + 4 :0]) catch |err| switch (err) {
+                const coff_file = fs.openFileAbsoluteW(name_buffer[0 .. len + 4 :0], .{}) catch |err| switch (err) {
                     error.FileNotFound => return error.MissingDebugInfo,
                     else => return err,
                 };
+                obj_di.* = try readCoffDebugInfo(self.allocator, coff_file);
                 obj_di.base_address = seg_start;
 
                 try self.address_map.putNoClobber(seg_start, obj_di);
@@ -1248,6 +1163,7 @@ pub const DebugInfo = struct {
 
         if (os.dl_iterate_phdr(&ctx, anyerror, struct {
             fn callback(info: *os.dl_phdr_info, size: usize, context: *CtxTy) !void {
+                _ = size;
                 // The base address is too high
                 if (context.address < info.dlpi_addr)
                     return;
@@ -1276,46 +1192,41 @@ pub const DebugInfo = struct {
             else => return error.MissingDebugInfo,
         }
 
-        if (self.address_map.getValue(ctx.base_address)) |obj_di| {
+        if (self.address_map.get(ctx.base_address)) |obj_di| {
             return obj_di;
         }
-
-        const elf_path = if (ctx.name.len > 0)
-            ctx.name
-        else blk: {
-            var buf: [fs.MAX_PATH_BYTES]u8 = undefined;
-            break :blk try fs.selfExePath(&buf);
-        };
 
         const obj_di = try self.allocator.create(ModuleDebugInfo);
         errdefer self.allocator.destroy(obj_di);
 
-        obj_di.* = openElfDebugInfo(self.allocator, elf_path) catch |err| switch (err) {
+        // TODO https://github.com/ziglang/zig/issues/5525
+        const copy = if (ctx.name.len > 0)
+            fs.cwd().openFile(ctx.name, .{ .intended_io_mode = .blocking })
+        else
+            fs.openSelfExe(.{ .intended_io_mode = .blocking });
+
+        const elf_file = copy catch |err| switch (err) {
             error.FileNotFound => return error.MissingDebugInfo,
             else => return err,
         };
+
+        obj_di.* = try readElfDebugInfo(self.allocator, elf_file);
         obj_di.base_address = ctx.base_address;
 
         try self.address_map.putNoClobber(ctx.base_address, obj_di);
 
         return obj_di;
     }
-};
 
-const SymbolInfo = struct {
-    symbol_name: []const u8 = "???",
-    compile_unit_name: []const u8 = "???",
-    line_info: ?LineInfo = null,
-
-    fn deinit(self: @This()) void {
-        if (self.line_info) |li| {
-            li.deinit();
-        }
+    fn lookupModuleHaiku(self: *DebugInfo, address: usize) !*ModuleDebugInfo {
+        _ = self;
+        _ = address;
+        @panic("TODO implement lookup module for Haiku");
     }
 };
 
-pub const ModuleDebugInfo = switch (builtin.os.tag) {
-    .macosx, .ios, .watchos, .tvos => struct {
+pub const ModuleDebugInfo = switch (native_os) {
+    .macos, .ios, .watchos, .tvos => struct {
         base_address: usize,
         mapped_memory: []const u8,
         symbols: []const MachoSymbol,
@@ -1329,7 +1240,8 @@ pub const ModuleDebugInfo = switch (builtin.os.tag) {
         }
 
         fn loadOFile(self: *@This(), o_file_path: []const u8) !DW.DwarfInfo {
-            const mapped_mem = try mapWholeFile(o_file_path);
+            const o_file = try fs.cwd().openFile(o_file_path, .{ .intended_io_mode = .blocking });
+            const mapped_mem = try mapWholeFile(o_file);
 
             const hdr = @ptrCast(
                 *const macho.mach_header_64,
@@ -1417,7 +1329,7 @@ pub const ModuleDebugInfo = switch (builtin.os.tag) {
             return di;
         }
 
-        fn getSymbolAtAddress(self: *@This(), address: usize) !SymbolInfo {
+        pub fn getSymbolAtAddress(self: *@This(), address: usize) !SymbolInfo {
             nosuspend {
                 // Translate the VA into an address into this object
                 const relocated_address = address - self.base_address;
@@ -1437,7 +1349,7 @@ pub const ModuleDebugInfo = switch (builtin.os.tag) {
                 const o_file_path = mem.spanZ(self.strings[symbol.ofile.?.n_strx..]);
 
                 // Check if its debug infos are already in the cache
-                var o_file_di = self.ofiles.getValue(o_file_path) orelse
+                var o_file_di = self.ofiles.get(o_file_path) orelse
                     (self.loadOFile(o_file_path) catch |err| switch (err) {
                     error.FileNotFound,
                     error.MissingDebugInfo,
@@ -1455,7 +1367,7 @@ pub const ModuleDebugInfo = switch (builtin.os.tag) {
                 if (o_file_di.findCompileUnit(relocated_address_o)) |compile_unit| {
                     return SymbolInfo{
                         .symbol_name = o_file_di.getSymbolName(relocated_address_o) orelse "???",
-                        .compile_unit_name = compile_unit.die.getAttrString(&o_file_di, DW.AT_name) catch |err| switch (err) {
+                        .compile_unit_name = compile_unit.die.getAttrString(&o_file_di, DW.AT.name) catch |err| switch (err) {
                             error.MissingDebugInfo, error.InvalidDebugInfo => "???",
                             else => return err,
                         },
@@ -1477,24 +1389,32 @@ pub const ModuleDebugInfo = switch (builtin.os.tag) {
     },
     .uefi, .windows => struct {
         base_address: usize,
-        pdb: pdb.Pdb,
+        debug_data: PdbOrDwarf,
         coff: *coff.Coff,
-        sect_contribs: []pdb.SectionContribEntry,
-        modules: []Module,
 
         pub fn allocator(self: @This()) *mem.Allocator {
             return self.coff.allocator;
         }
 
-        fn getSymbolAtAddress(self: *@This(), address: usize) !SymbolInfo {
+        pub fn getSymbolAtAddress(self: *@This(), address: usize) !SymbolInfo {
             // Translate the VA into an address into this object
             const relocated_address = address - self.base_address;
 
+            switch (self.debug_data) {
+                .dwarf => |*dwarf| {
+                    const dwarf_address = relocated_address + self.coff.pe_header.image_base;
+                    return getSymbolFromDwarf(dwarf_address, dwarf);
+                },
+                .pdb => {
+                    // fallthrough to pdb handling
+                },
+            }
+
             var coff_section: *coff.Section = undefined;
-            const mod_index = for (self.sect_contribs) |sect_contrib| {
+            const mod_index = for (self.debug_data.pdb.sect_contribs) |sect_contrib| {
                 if (sect_contrib.Section > self.coff.sections.items.len) continue;
                 // Remember that SectionContribEntry.Section is 1-based.
-                coff_section = &self.coff.sections.span()[sect_contrib.Section - 1];
+                coff_section = &self.coff.sections.items[sect_contrib.Section - 1];
 
                 const vaddr_start = coff_section.header.virtual_address + sect_contrib.Offset;
                 const vaddr_end = vaddr_start + sect_contrib.Size;
@@ -1506,126 +1426,18 @@ pub const ModuleDebugInfo = switch (builtin.os.tag) {
                 return SymbolInfo{};
             };
 
-            const mod = &self.modules[mod_index];
-            try populateModule(self, mod);
-            const obj_basename = fs.path.basename(mod.obj_file_name);
+            const module = (try self.debug_data.pdb.getModule(mod_index)) orelse
+                return error.InvalidDebugInfo;
+            const obj_basename = fs.path.basename(module.obj_file_name);
 
-            var symbol_i: usize = 0;
-            const symbol_name = if (!mod.populated) "???" else while (symbol_i != mod.symbols.len) {
-                const prefix = @ptrCast(*pdb.RecordPrefix, &mod.symbols[symbol_i]);
-                if (prefix.RecordLen < 2)
-                    return error.InvalidDebugInfo;
-                switch (prefix.RecordKind) {
-                    .S_LPROC32, .S_GPROC32 => {
-                        const proc_sym = @ptrCast(*pdb.ProcSym, &mod.symbols[symbol_i + @sizeOf(pdb.RecordPrefix)]);
-                        const vaddr_start = coff_section.header.virtual_address + proc_sym.CodeOffset;
-                        const vaddr_end = vaddr_start + proc_sym.CodeSize;
-                        if (relocated_address >= vaddr_start and relocated_address < vaddr_end) {
-                            break mem.spanZ(@ptrCast([*:0]u8, proc_sym) + @sizeOf(pdb.ProcSym));
-                        }
-                    },
-                    else => {},
-                }
-                symbol_i += prefix.RecordLen + @sizeOf(u16);
-                if (symbol_i > mod.symbols.len)
-                    return error.InvalidDebugInfo;
-            } else "???";
-
-            const subsect_info = mod.subsect_info;
-
-            var sect_offset: usize = 0;
-            var skip_len: usize = undefined;
-            const opt_line_info = subsections: {
-                const checksum_offset = mod.checksum_offset orelse break :subsections null;
-                while (sect_offset != subsect_info.len) : (sect_offset += skip_len) {
-                    const subsect_hdr = @ptrCast(*pdb.DebugSubsectionHeader, &subsect_info[sect_offset]);
-                    skip_len = subsect_hdr.Length;
-                    sect_offset += @sizeOf(pdb.DebugSubsectionHeader);
-
-                    switch (subsect_hdr.Kind) {
-                        .Lines => {
-                            var line_index = sect_offset;
-
-                            const line_hdr = @ptrCast(*pdb.LineFragmentHeader, &subsect_info[line_index]);
-                            if (line_hdr.RelocSegment == 0)
-                                return error.MissingDebugInfo;
-                            line_index += @sizeOf(pdb.LineFragmentHeader);
-                            const frag_vaddr_start = coff_section.header.virtual_address + line_hdr.RelocOffset;
-                            const frag_vaddr_end = frag_vaddr_start + line_hdr.CodeSize;
-
-                            if (relocated_address >= frag_vaddr_start and relocated_address < frag_vaddr_end) {
-                                // There is an unknown number of LineBlockFragmentHeaders (and their accompanying line and column records)
-                                // from now on. We will iterate through them, and eventually find a LineInfo that we're interested in,
-                                // breaking out to :subsections. If not, we will make sure to not read anything outside of this subsection.
-                                const subsection_end_index = sect_offset + subsect_hdr.Length;
-
-                                while (line_index < subsection_end_index) {
-                                    const block_hdr = @ptrCast(*pdb.LineBlockFragmentHeader, &subsect_info[line_index]);
-                                    line_index += @sizeOf(pdb.LineBlockFragmentHeader);
-                                    const start_line_index = line_index;
-
-                                    const has_column = line_hdr.Flags.LF_HaveColumns;
-
-                                    // All line entries are stored inside their line block by ascending start address.
-                                    // Heuristic: we want to find the last line entry
-                                    // that has a vaddr_start <= relocated_address.
-                                    // This is done with a simple linear search.
-                                    var line_i: u32 = 0;
-                                    while (line_i < block_hdr.NumLines) : (line_i += 1) {
-                                        const line_num_entry = @ptrCast(*pdb.LineNumberEntry, &subsect_info[line_index]);
-                                        line_index += @sizeOf(pdb.LineNumberEntry);
-
-                                        const vaddr_start = frag_vaddr_start + line_num_entry.Offset;
-                                        if (relocated_address < vaddr_start) {
-                                            break;
-                                        }
-                                    }
-
-                                    // line_i == 0 would mean that no matching LineNumberEntry was found.
-                                    if (line_i > 0) {
-                                        const subsect_index = checksum_offset + block_hdr.NameIndex;
-                                        const chksum_hdr = @ptrCast(*pdb.FileChecksumEntryHeader, &mod.subsect_info[subsect_index]);
-                                        const strtab_offset = @sizeOf(pdb.PDBStringTableHeader) + chksum_hdr.FileNameOffset;
-                                        try self.pdb.string_table.seekTo(strtab_offset);
-                                        const source_file_name = try self.pdb.string_table.readNullTermString(self.allocator());
-
-                                        const line_entry_idx = line_i - 1;
-
-                                        const column = if (has_column) blk: {
-                                            const start_col_index = start_line_index + @sizeOf(pdb.LineNumberEntry) * block_hdr.NumLines;
-                                            const col_index = start_col_index + @sizeOf(pdb.ColumnNumberEntry) * line_entry_idx;
-                                            const col_num_entry = @ptrCast(*pdb.ColumnNumberEntry, &subsect_info[col_index]);
-                                            break :blk col_num_entry.StartColumn;
-                                        } else 0;
-
-                                        const found_line_index = start_line_index + line_entry_idx * @sizeOf(pdb.LineNumberEntry);
-                                        const line_num_entry = @ptrCast(*pdb.LineNumberEntry, &subsect_info[found_line_index]);
-                                        const flags = @ptrCast(*pdb.LineNumberEntry.Flags, &line_num_entry.Flags);
-
-                                        break :subsections LineInfo{
-                                            .allocator = self.allocator(),
-                                            .file_name = source_file_name,
-                                            .line = flags.Start,
-                                            .column = column,
-                                        };
-                                    }
-                                }
-
-                                // Checking that we are not reading garbage after the (possibly) multiple block fragments.
-                                if (line_index != subsection_end_index) {
-                                    return error.InvalidDebugInfo;
-                                }
-                            }
-                        },
-                        else => {},
-                    }
-
-                    if (sect_offset > subsect_info.len)
-                        return error.InvalidDebugInfo;
-                } else {
-                    break :subsections null;
-                }
-            };
+            const symbol_name = self.debug_data.pdb.getSymbolName(
+                module,
+                relocated_address - coff_section.header.virtual_address,
+            ) orelse "???";
+            const opt_line_info = try self.debug_data.pdb.getLineNumberInfo(
+                module,
+                relocated_address - coff_section.header.virtual_address,
+            );
 
             return SymbolInfo{
                 .symbol_name = symbol_name,
@@ -1634,39 +1446,40 @@ pub const ModuleDebugInfo = switch (builtin.os.tag) {
             };
         }
     },
-    .linux, .netbsd, .freebsd, .dragonfly => struct {
+    .linux, .netbsd, .freebsd, .dragonfly, .openbsd, .haiku, .solaris => struct {
         base_address: usize,
         dwarf: DW.DwarfInfo,
         mapped_memory: []const u8,
 
-        fn getSymbolAtAddress(self: *@This(), address: usize) !SymbolInfo {
+        pub fn getSymbolAtAddress(self: *@This(), address: usize) !SymbolInfo {
             // Translate the VA into an address into this object
             const relocated_address = address - self.base_address;
-
-            if (nosuspend self.dwarf.findCompileUnit(relocated_address)) |compile_unit| {
-                return SymbolInfo{
-                    .symbol_name = nosuspend self.dwarf.getSymbolName(relocated_address) orelse "???",
-                    .compile_unit_name = compile_unit.die.getAttrString(&self.dwarf, DW.AT_name) catch |err| switch (err) {
-                        error.MissingDebugInfo, error.InvalidDebugInfo => "???",
-                        else => return err,
-                    },
-                    .line_info = nosuspend self.dwarf.getLineNumberInfo(compile_unit.*, relocated_address) catch |err| switch (err) {
-                        error.MissingDebugInfo, error.InvalidDebugInfo => null,
-                        else => return err,
-                    },
-                };
-            } else |err| switch (err) {
-                error.MissingDebugInfo, error.InvalidDebugInfo => {
-                    return SymbolInfo{};
-                },
-                else => return err,
-            }
-
-            unreachable;
+            return getSymbolFromDwarf(relocated_address, &self.dwarf);
         }
     },
     else => DW.DwarfInfo,
 };
+
+fn getSymbolFromDwarf(address: u64, di: *DW.DwarfInfo) !SymbolInfo {
+    if (nosuspend di.findCompileUnit(address)) |compile_unit| {
+        return SymbolInfo{
+            .symbol_name = nosuspend di.getSymbolName(address) orelse "???",
+            .compile_unit_name = compile_unit.die.getAttrString(di, DW.AT.name) catch |err| switch (err) {
+                error.MissingDebugInfo, error.InvalidDebugInfo => "???",
+                else => return err,
+            },
+            .line_info = nosuspend di.getLineNumberInfo(compile_unit.*, address) catch |err| switch (err) {
+                error.MissingDebugInfo, error.InvalidDebugInfo => null,
+                else => return err,
+            },
+        };
+    } else |err| switch (err) {
+        error.MissingDebugInfo, error.InvalidDebugInfo => {
+            return SymbolInfo{};
+        },
+        else => return err,
+    }
+}
 
 /// TODO multithreaded awareness
 var debug_info_allocator: ?*mem.Allocator = null;
@@ -1680,9 +1493,10 @@ fn getDebugInfoAllocator() *mem.Allocator {
 }
 
 /// Whether or not the current target can print useful debug information when a segfault occurs.
-pub const have_segfault_handling_support = switch (builtin.os.tag) {
-    .linux, .netbsd => true,
+pub const have_segfault_handling_support = switch (native_os) {
+    .linux, .netbsd, .solaris => true,
     .windows => true,
+    .freebsd, .openbsd => @hasDecl(os.system, "ucontext_t"),
     else => false,
 };
 pub const enable_segfault_handler: bool = if (@hasDecl(root, "enable_segfault_handler"))
@@ -1703,23 +1517,23 @@ pub fn attachSegfaultHandler() void {
     if (!have_segfault_handling_support) {
         @compileError("segfault handler not supported for this target");
     }
-    if (builtin.os.tag == .windows) {
+    if (native_os == .windows) {
         windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         return;
     }
     var act = os.Sigaction{
-        .sigaction = handleSegfaultLinux,
+        .handler = .{ .sigaction = handleSegfaultLinux },
         .mask = os.empty_sigset,
-        .flags = (os.SA_SIGINFO | os.SA_RESTART | os.SA_RESETHAND),
+        .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
     };
 
-    os.sigaction(os.SIGSEGV, &act, null);
-    os.sigaction(os.SIGILL, &act, null);
-    os.sigaction(os.SIGBUS, &act, null);
+    os.sigaction(os.SIG.SEGV, &act, null);
+    os.sigaction(os.SIG.ILL, &act, null);
+    os.sigaction(os.SIG.BUS, &act, null);
 }
 
 fn resetSegfaultHandler() void {
-    if (builtin.os.tag == .windows) {
+    if (native_os == .windows) {
         if (windows_segfault_handle) |handle| {
             assert(windows.kernel32.RemoveVectoredExceptionHandler(handle) != 0);
             windows_segfault_handle = null;
@@ -1727,13 +1541,13 @@ fn resetSegfaultHandler() void {
         return;
     }
     var act = os.Sigaction{
-        .sigaction = os.SIG_DFL,
+        .handler = .{ .sigaction = os.SIG.DFL },
         .mask = os.empty_sigset,
         .flags = 0,
     };
-    os.sigaction(os.SIGSEGV, &act, null);
-    os.sigaction(os.SIGILL, &act, null);
-    os.sigaction(os.SIGBUS, &act, null);
+    os.sigaction(os.SIG.SEGV, &act, null);
+    os.sigaction(os.SIG.ILL, &act, null);
+    os.sigaction(os.SIG.BUS, &act, null);
 }
 
 fn handleSegfaultLinux(sig: i32, info: *const os.siginfo_t, ctx_ptr: ?*const c_void) callconv(.C) noreturn {
@@ -1742,28 +1556,47 @@ fn handleSegfaultLinux(sig: i32, info: *const os.siginfo_t, ctx_ptr: ?*const c_v
     // and the resulting segfault will crash the process rather than continually dump stack traces.
     resetSegfaultHandler();
 
-    const addr = switch (builtin.os.tag) {
+    const addr = switch (native_os) {
         .linux => @ptrToInt(info.fields.sigfault.addr),
+        .freebsd => @ptrToInt(info.addr),
         .netbsd => @ptrToInt(info.info.reason.fault.addr),
+        .openbsd => @ptrToInt(info.data.fault.addr),
+        .solaris => @ptrToInt(info.reason.fault.addr),
         else => unreachable,
     };
-    switch (sig) {
-        os.SIGSEGV => std.debug.warn("Segmentation fault at address 0x{x}\n", .{addr}),
-        os.SIGILL => std.debug.warn("Illegal instruction at address 0x{x}\n", .{addr}),
-        os.SIGBUS => std.debug.warn("Bus error at address 0x{x}\n", .{addr}),
-        else => unreachable,
+
+    // Don't use std.debug.print() as stderr_mutex may still be locked.
+    nosuspend {
+        const stderr = io.getStdErr().writer();
+        _ = switch (sig) {
+            os.SIG.SEGV => stderr.print("Segmentation fault at address 0x{x}\n", .{addr}),
+            os.SIG.ILL => stderr.print("Illegal instruction at address 0x{x}\n", .{addr}),
+            os.SIG.BUS => stderr.print("Bus error at address 0x{x}\n", .{addr}),
+            else => unreachable,
+        } catch os.abort();
     }
-    switch (builtin.arch) {
+
+    switch (native_arch) {
         .i386 => {
             const ctx = @ptrCast(*const os.ucontext_t, @alignCast(@alignOf(os.ucontext_t), ctx_ptr));
-            const ip = @intCast(usize, ctx.mcontext.gregs[os.REG_EIP]);
-            const bp = @intCast(usize, ctx.mcontext.gregs[os.REG_EBP]);
+            const ip = @intCast(usize, ctx.mcontext.gregs[os.REG.EIP]);
+            const bp = @intCast(usize, ctx.mcontext.gregs[os.REG.EBP]);
             dumpStackTraceFromBase(bp, ip);
         },
         .x86_64 => {
             const ctx = @ptrCast(*const os.ucontext_t, @alignCast(@alignOf(os.ucontext_t), ctx_ptr));
-            const ip = @intCast(usize, ctx.mcontext.gregs[os.REG_RIP]);
-            const bp = @intCast(usize, ctx.mcontext.gregs[os.REG_RBP]);
+            const ip = switch (native_os) {
+                .linux, .netbsd, .solaris => @intCast(usize, ctx.mcontext.gregs[os.REG.RIP]),
+                .freebsd => @intCast(usize, ctx.mcontext.rip),
+                .openbsd => @intCast(usize, ctx.sc_rip),
+                else => unreachable,
+            };
+            const bp = switch (native_os) {
+                .linux, .netbsd, .solaris => @intCast(usize, ctx.mcontext.gregs[os.REG.RBP]),
+                .openbsd => @intCast(usize, ctx.sc_rbp),
+                .freebsd => @intCast(usize, ctx.mcontext.rbp),
+                else => unreachable,
+            };
             dumpStackTraceFromBase(bp, ip);
         },
         .arm => {
@@ -1788,7 +1621,7 @@ fn handleSegfaultLinux(sig: i32, info: *const os.siginfo_t, ctx_ptr: ?*const c_v
     os.abort();
 }
 
-fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(.Stdcall) c_long {
+fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows.WINAPI) c_long {
     switch (info.ExceptionRecord.ExceptionCode) {
         windows.EXCEPTION_DATATYPE_MISALIGNMENT => handleSegfaultWindowsExtra(info, 0, "Unaligned Memory Access"),
         windows.EXCEPTION_ACCESS_VIOLATION => handleSegfaultWindowsExtra(info, 1, null),
@@ -1803,20 +1636,29 @@ fn handleSegfaultWindowsExtra(info: *windows.EXCEPTION_POINTERS, comptime msg: u
     const exception_address = @ptrToInt(info.ExceptionRecord.ExceptionAddress);
     if (@hasDecl(windows, "CONTEXT")) {
         const regs = info.ContextRecord.getRegs();
-        switch (msg) {
-            0 => std.debug.warn("{}\n", .{format.?}),
-            1 => std.debug.warn("Segmentation fault at address 0x{x}\n", .{info.ExceptionRecord.ExceptionInformation[1]}),
-            2 => std.debug.warn("Illegal instruction at address 0x{x}\n", .{regs.ip}),
-            else => unreachable,
+        // Don't use std.debug.print() as stderr_mutex may still be locked.
+        nosuspend {
+            const stderr = io.getStdErr().writer();
+            _ = switch (msg) {
+                0 => stderr.print("{s}\n", .{format.?}),
+                1 => stderr.print("Segmentation fault at address 0x{x}\n", .{info.ExceptionRecord.ExceptionInformation[1]}),
+                2 => stderr.print("Illegal instruction at address 0x{x}\n", .{regs.ip}),
+                else => unreachable,
+            } catch os.abort();
         }
 
         dumpStackTraceFromBase(regs.bp, regs.ip);
         os.abort();
     } else {
         switch (msg) {
-            0 => panicExtra(null, exception_address, format.?, .{}),
-            1 => panicExtra(null, exception_address, "Segmentation fault at address 0x{x}", .{info.ExceptionRecord.ExceptionInformation[1]}),
-            2 => panicExtra(null, exception_address, "Illegal Instruction", .{}),
+            0 => panicImpl(null, exception_address, format.?),
+            1 => {
+                const format_item = "Segmentation fault at address 0x{x}";
+                var buf: [format_item.len + 64]u8 = undefined; // 64 is arbitrary, but sufficiently large
+                const to_print = std.fmt.bufPrint(buf[0..buf.len], format_item, .{info.ExceptionRecord.ExceptionInformation[1]}) catch unreachable;
+                panicImpl(null, exception_address, to_print);
+            },
+            2 => panicImpl(null, exception_address, "Illegal Instruction"),
             else => unreachable,
         }
     }
@@ -1824,12 +1666,7 @@ fn handleSegfaultWindowsExtra(info: *windows.EXCEPTION_POINTERS, comptime msg: u
 
 pub fn dumpStackPointerAddr(prefix: []const u8) void {
     const sp = asm (""
-        : [argc] "={rsp}" (-> usize)
+        : [argc] "={rsp}" (-> usize),
     );
     std.debug.warn("{} sp = 0x{x}\n", .{ prefix, sp });
-}
-
-// Reference everything so it gets tested.
-test "" {
-    _ = leb;
 }

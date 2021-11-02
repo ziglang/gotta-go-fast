@@ -3,9 +3,13 @@ const bench = @import("root");
 
 const Rng = std.rand.Xoroshiro128; // DefaultPrng at time of writing
 
-pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {}
+pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {
+    _ = gpa;
+    _ = options;
+}
 
 pub fn run(gpa: *std.mem.Allocator, context: void) !void {
+    _ = context;
     const byte_count = 100_000_000;
 
     try rawBytes(gpa, byte_count);
@@ -26,7 +30,8 @@ fn rawBytes(gpa: *std.mem.Allocator, size: usize) !void {
     defer gpa.free(buf);
 
     var rng = Rng.init(123456789);
-    rng.random.bytes(buf);
+    const random = rng.random();
+    random.bytes(buf);
 
     if (buf[size - 1] != 42) @panic("error");
 }
@@ -35,10 +40,11 @@ fn rawBytes(gpa: *std.mem.Allocator, size: usize) !void {
 fn integers(comptime T: type, size: usize) T {
     var res: T = 0;
     var rng = Rng.init(123456789);
+    const random = rng.random();
 
     var i = @as(u32, 0);
     while (i < size) : (i += @sizeOf(T)) {
-        res +%= rng.random.int(T);
+        res +%= random.int(T);
     }
 
     return res;

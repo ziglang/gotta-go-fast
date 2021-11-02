@@ -23,6 +23,7 @@ inline fn hasMask(input: u32, mask: u32) bool {
 }
 
 pub fn detectNativeCpuAndFeatures(arch: Target.Cpu.Arch, os: Target.Os, cross_target: CrossTarget) Target.Cpu {
+    _ = cross_target;
     var cpu = Target.Cpu{
         .arch = arch,
         .model = Target.Cpu.Model.generic(arch),
@@ -306,6 +307,10 @@ fn detectAMDProcessor(cpu: *Target.Cpu, family: u32, model: u32) void {
             }
             return;
         },
+        25 => {
+            cpu.model = &Target.x86.cpu.znver3;
+            return;
+        },
         else => {
             return;
         },
@@ -538,7 +543,7 @@ fn cpuid(leaf_id: u32, subid: u32) CpuidLeaf {
         :
         : [leaf_id] "{eax}" (leaf_id),
           [subid] "{ecx}" (subid),
-          [leaf_ptr] "r" (&cpuid_leaf)
+          [leaf_ptr] "r" (&cpuid_leaf),
         : "eax", "ebx", "ecx", "edx"
     );
 
@@ -550,7 +555,7 @@ fn getXCR0() u32 {
     return asm volatile (
         \\ xor %%ecx, %%ecx
         \\ xgetbv
-        : [ret] "={eax}" (-> u32)
+        : [ret] "={eax}" (-> u32),
         :
         : "eax", "edx", "ecx"
     );

@@ -1,4 +1,4 @@
-const builtin = @import("builtin");
+const native_arch = @import("builtin").cpu.arch;
 
 // Zig's own stack-probe routine (available only on x86 and x86_64)
 pub fn zig_probe_stack() callconv(.Naked) void {
@@ -8,7 +8,7 @@ pub fn zig_probe_stack() callconv(.Naked) void {
     // invalid so let's update it on the go, otherwise we'll get a segfault
     // instead of triggering the stack growth.
 
-    switch (builtin.arch) {
+    switch (native_arch) {
         .x86_64 => {
             // %rax = probe length, %rsp = stack pointer
             asm volatile (
@@ -60,7 +60,7 @@ pub fn zig_probe_stack() callconv(.Naked) void {
 fn win_probe_stack_only() void {
     @setRuntimeSafety(false);
 
-    switch (builtin.arch) {
+    switch (native_arch) {
         .x86_64 => {
             asm volatile (
                 \\         push   %%rcx
@@ -105,6 +105,21 @@ fn win_probe_stack_only() void {
         },
         else => {},
     }
+    if (comptime native_arch.isAARCH64()) {
+        // NOTE: page size hardcoded to 4096 for now
+        asm volatile (
+            \\        lsl    x16, x15, #4
+            \\        mov    x17, sp
+            \\1:
+            \\
+            \\        sub    x17, x17, 4096
+            \\        subs   x16, x16, 4096
+            \\        ldr    xzr, [x17]
+            \\        b.gt   1b
+            \\
+            \\        ret
+        );
+    }
 
     unreachable;
 }
@@ -112,7 +127,7 @@ fn win_probe_stack_only() void {
 fn win_probe_stack_adjust_sp() void {
     @setRuntimeSafety(false);
 
-    switch (builtin.arch) {
+    switch (native_arch) {
         .x86_64 => {
             asm volatile (
                 \\         push   %%rcx
@@ -186,7 +201,9 @@ pub fn _chkstk() callconv(.Naked) void {
 }
 pub fn __chkstk() callconv(.Naked) void {
     @setRuntimeSafety(false);
-    switch (builtin.arch) {
+    if (comptime native_arch.isAARCH64()) {
+        @call(.{ .modifier = .always_inline }, win_probe_stack_only, .{});
+    } else switch (native_arch) {
         .i386 => @call(.{ .modifier = .always_inline }, win_probe_stack_adjust_sp, .{}),
         .x86_64 => @call(.{ .modifier = .always_inline }, win_probe_stack_only, .{}),
         else => unreachable,
