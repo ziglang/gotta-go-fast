@@ -3,7 +3,7 @@ const bench = @import("root");
 
 pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) ![]const u8 {
     _ = gpa;
-    options.rusage_who = std.os.rusage.CHILDREN;
+    options.useChildProcess();
     return options.zig_exe;
 }
 

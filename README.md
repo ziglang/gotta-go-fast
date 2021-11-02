@@ -84,17 +84,35 @@ power management: ts ttp tm hwpstate cpb eff_freq_ro [13] [14]
 
 These measurements should only be taken for a Zig compiler that has passed the
 full test suite, and the `$ZIG` command should be a release build matching the
-git commit of `$COMMIT_SHA1`.
+git commit of `$COMMIT_SHA1`. `$COMMIT_TIMESTAMP` is required to be in the format
+given by `--pretty=format:%at`.
 
 After cloning this repository:
 
 ```
-$ZIG run collect-measurements.zig -- records.csv $ZIG $COMMIT_SHA1
+$ZIG run collect-measurements.zig -- records.csv $ZIG $COMMIT_SHA1 $COMMIT_TIMESTAMP
 ```
 
 This will add 1 row per benchmark to `records.csv` for the specified commit.
 The CI script should then push `records.csv` and `manifest.json` to the server so
 that the frontend HTML+JavaScript can fetch them and display the information.
+
+## Backfilling Data
+
+`$ZIG_GIT_SRC` must be a git clone of zig, with two build folders configured with
+cmake already. Both should be release builds of zig (`-DCMAKE_BUILD_TYPE=Release`).
+
+ * `build-release`
+ * `build-backfill`
+
+`queue.txt` is a file containing whitespace-separated git commit hashes.
+
+```
+$ZIG run backfill.zig -- records.csv $ZIG_GIT_SRC queue.txt
+```
+
+This will check out each commit one-by-one and run `collect-measurements.zig`,
+updating `records.csv` with the new rows.
 
 ## Adding a Benchmark
 
@@ -109,5 +127,6 @@ zig run bench.zig --pkg-begin app ./benchmarks/foo/bar.zig --pkg-end -O ReleaseF
 Handy to copy paste to start a new table.
 
 ```csv
-timestamp,benchmark_name,commit_hash,zig_version,error_message,samples_taken,wall_time_median,wall_time_mean,wall_time_min,wall_time_max,utime_median,utime_mean,utime_min,utime_max,stime_median,stime_mean,stime_min,stime_max,cpu_cycles_median,cpu_cycles_mean,cpu_cycles_min,cpu_cycles_max,instructions_median,instructions_mean,instructions_min,instructions_max,cache_references_median,cache_references_mean,cache_references_min,cache_references_max,cache_misses_median,cache_misses_mean,cache_misses_min,cache_misses_max,branch_instructions_median,branch_instructions_mean,branch_instructions_min,branch_instructions_max,branch_misses_median,branch_misses_mean,branch_misses_min,branch_misses_max,maxrss
+timestamp,benchmark_name,commit_hash,commit_timestamp,zig_version,error_message,samples_taken,wall_time_median,wall_time_mean,wall_time_min,wall_time_max,utime_median,utime_mean,utime_min,utime_max,stime_median,stime_mean,stime_min,stime_max,cpu_cycles_median,cpu_cycles_mean,cpu_cycles_min,cpu_cycles_max,instructions_median,instructions_mean,instructions_min,instructions_max,cache_references_median,cache_references_mean,cache_references_min,cache_references_max,cache_misses_median,cache_misses_mean,cache_misses_min,cache_misses_max,branch_instructions_median,branch_instructions_mean,branch_instructions_min,branch_instructions_max,branch_misses_median,branch_misses_mean,branch_misses_min,branch_misses_max,maxrss
 ```
+
