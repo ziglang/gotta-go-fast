@@ -213,10 +213,10 @@ pub const Options = struct {
     }
 };
 
+var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .{};
+
 pub fn main() !void {
-    // When not linking libc, we use page_allocator intentionally to make the benchmark
-    // measurements depend less on the general purpose allocator implementation.
-    const gpa = if (builtin.link_libc) std.heap.c_allocator else std.heap.page_allocator;
+    const gpa = if (builtin.link_libc) std.heap.c_allocator else &general_purpose_allocator.allocator;
     var options: Options = .{
         .zig_exe = std.mem.spanZ(std.os.argv[1]),
     };
