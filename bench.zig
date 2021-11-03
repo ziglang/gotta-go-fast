@@ -121,10 +121,10 @@ pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
                 .inherit = options.use_child_process,
                 .enable_on_exec = options.use_child_process,
             },
-            .sample_type = PERF.SAMPLE.READ,
         };
-        perf_fds[i] = perf_event_open(&attr, 0, -1, perf_fds[0], PERF.FLAG.FD_CLOEXEC) catch
-            @panic("unable to open perf event");
+        perf_fds[i] = perf_event_open(&attr, 0, -1, perf_fds[0], PERF.FLAG.FD_CLOEXEC) catch |err| {
+            std.debug.panic("unable to open perf event: {s}\n", .{@errorName(err)});
+        };
     }
 
     var sample_index: usize = 0;
@@ -249,6 +249,9 @@ pub fn exec(
         },
     }
 }
+comptime {
+    assert(@sizeOf(perf_event_attr) == 112);
+}
 
 pub const perf_event_attr = extern struct {
     /// Major type: hardware/software/tracepoint/etc.
@@ -330,7 +333,9 @@ pub const perf_event_attr = extern struct {
         /// include namespaces data
         namespaces: bool = false,
 
-        __reserved_1: u35 = 0,
+        // TODO should be u35
+        //__reserved_1: u35 = 0,
+        __reserved_1: u27 = 0,
     } = .{},
     /// wakeup every n events, or
     /// bytes before wakeup
