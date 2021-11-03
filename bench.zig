@@ -18,10 +18,10 @@ pub const Measurement = struct {
         const S = struct {
             fn order(context: void, a: Sample, b: Sample) bool {
                 _ = context;
-                return @field(a, field) < @field(b, field);
+                return a.wall_time < b.wall_time;
             }
         };
-        // Remove the 2 outliers
+        // Remove the 2 outliers, always according to wall_time.
         std.sort.sort(Sample, all_samples, {}, S.order);
         const samples = all_samples[1 .. all_samples.len - 1];
         // Compute stats
