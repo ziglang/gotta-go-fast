@@ -14,20 +14,14 @@ pub fn main() !void {
     const commits_file = args[3];
 
     const commits_file_text = try fs.cwd().readFileAlloc(arena, commits_file, 2 * 1024 * 1024);
-
-    const new_zig_build_dir = try fs.path.join(arena, &[_][]const u8{ zig_git_path, "build-release" });
-    const new_zig_exe = try fs.path.join(arena, &[_][]const u8{ new_zig_build_dir, "zig" });
-    const old_zig_build_dir = try fs.path.join(arena, &[_][]const u8{ zig_git_path, "build-backfill" });
-    const old_zig_exe = try fs.path.join(arena, &[_][]const u8{ old_zig_build_dir, "zig" });
-
-    std.debug.print("Checking out origin/master at {s}...\n", .{zig_git_path});
-    try exec(gpa, &[_][]const u8{ "git", "checkout", "origin/master" }, .{
-        .cwd = zig_git_path,
+    const backfill_zig_build_dir = try fs.path.join(arena, &[_][]const u8{
+        zig_git_path, "build-backfill",
     });
-
-    std.debug.print("Building new zig to {s}...\n", .{new_zig_exe});
-    try exec(gpa, &[_][]const u8{"ninja"}, .{
-        .cwd = new_zig_build_dir,
+    const new_zig_exe = try fs.path.join(arena, &[_][]const u8{
+        backfill_zig_build_dir, "new", "bin", "zig",
+    });
+    const old_zig_exe = try fs.path.join(arena, &[_][]const u8{
+        backfill_zig_build_dir, "zig",
     });
 
     var commits = std.mem.tokenize(u8, commits_file_text, " \r\n\t");
@@ -43,7 +37,7 @@ pub fn main() !void {
 
         std.debug.print("Building old zig to {s}...\n", .{old_zig_exe});
         try exec(gpa, &[_][]const u8{"ninja"}, .{
-            .cwd = old_zig_build_dir,
+            .cwd = backfill_zig_build_dir,
         });
 
         const zig_version_raw = try execCapture(arena, &[_][]const u8{ old_zig_exe, "version" }, .{});
