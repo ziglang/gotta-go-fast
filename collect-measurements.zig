@@ -39,10 +39,6 @@ const Record = struct {
     cache_misses_mean: u64 = 0,
     cache_misses_min: u64 = 0,
     cache_misses_max: u64 = 0,
-    branch_instructions_median: u64 = 0,
-    branch_instructions_mean: u64 = 0,
-    branch_instructions_min: u64 = 0,
-    branch_instructions_max: u64 = 0,
     branch_misses_median: u64 = 0,
     branch_misses_mean: u64 = 0,
     branch_misses_min: u64 = 0,
@@ -71,7 +67,7 @@ fn jsonToRecord(
     commit_timestamp: u64,
 ) !Record {
     // Example success output of benchmark program:
-    // {"samples_taken":3,"wall_time":{"median":131511898884,"mean":131511898884,"min":131511898884,"max":131511898884},"utime":{"median":131507380000,"mean":131507380000,"min":131507380000,"max":131507380000},"stime":{"median":885000,"mean":885000,"min":885000,"max":885000},"cpu_cycles":{"median":506087170166,"mean":506087170166,"min":506087170166,"max":506087170166},"instructions":{"median":1013354628954,"mean":1013354628954,"min":1013354628954,"max":1013354628954},"cache_references":{"median":22131539,"mean":22131539,"min":22131539,"max":22131539},"cache_misses":{"median":4523975,"mean":4523975,"min":4523975,"max":4523975},"branch_instructions":{"median":168663786878,"mean":168663786878,"min":168663786878,"max":168663786878},"branch_misses":{"median":885333330,"mean":885333330,"min":885333330,"max":885333330},"maxrss":341004}
+    // {"samples_taken":3,"wall_time":{"median":131511898884,"mean":131511898884,"min":131511898884,"max":131511898884},"utime":{"median":131507380000,"mean":131507380000,"min":131507380000,"max":131507380000},"stime":{"median":885000,"mean":885000,"min":885000,"max":885000},"cpu_cycles":{"median":506087170166,"mean":506087170166,"min":506087170166,"max":506087170166},"instructions":{"median":1013354628954,"mean":1013354628954,"min":1013354628954,"max":1013354628954},"cache_references":{"median":22131539,"mean":22131539,"min":22131539,"max":22131539},"cache_misses":{"median":4523975,"mean":4523975,"min":4523975,"max":4523975},"branch_misses":{"median":885333330,"mean":885333330,"min":885333330,"max":885333330},"maxrss":341004}
     //
     // Example failure output of the benchmark program:
     // FileNotFound
@@ -114,10 +110,6 @@ fn jsonToRecord(
         record.cache_misses_mean = @intCast(u64, mo.Object.get("cache_misses").?.Object.get("mean").?.Integer);
         record.cache_misses_min = @intCast(u64, mo.Object.get("cache_misses").?.Object.get("min").?.Integer);
         record.cache_misses_max = @intCast(u64, mo.Object.get("cache_misses").?.Object.get("max").?.Integer);
-        record.branch_instructions_median = @intCast(u64, mo.Object.get("branch_instructions").?.Object.get("median").?.Integer);
-        record.branch_instructions_mean = @intCast(u64, mo.Object.get("branch_instructions").?.Object.get("mean").?.Integer);
-        record.branch_instructions_min = @intCast(u64, mo.Object.get("branch_instructions").?.Object.get("min").?.Integer);
-        record.branch_instructions_max = @intCast(u64, mo.Object.get("branch_instructions").?.Object.get("max").?.Integer);
         record.branch_misses_median = @intCast(u64, mo.Object.get("branch_misses").?.Object.get("median").?.Integer);
         record.branch_misses_mean = @intCast(u64, mo.Object.get("branch_misses").?.Object.get("mean").?.Integer);
         record.branch_misses_min = @intCast(u64, mo.Object.get("branch_misses").?.Object.get("min").?.Integer);

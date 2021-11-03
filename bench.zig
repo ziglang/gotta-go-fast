@@ -54,7 +54,6 @@ pub const Results = union(enum) {
         instructions: Measurement,
         cache_references: Measurement,
         cache_misses: Measurement,
-        branch_instructions: Measurement,
         branch_misses: Measurement,
         maxrss: usize,
     },
@@ -68,7 +67,6 @@ const Sample = struct {
     instructions: u64,
     cache_references: u64,
     cache_misses: u64,
-    branch_instructions: u64,
     branch_misses: u64,
 };
 
@@ -100,7 +98,6 @@ const perf_measurements = [_]PerfMeasurement{
     .{ .name = "instructions", .config = PERF.COUNT.HW.INSTRUCTIONS },
     .{ .name = "cache_references", .config = PERF.COUNT.HW.CACHE_REFERENCES },
     .{ .name = "cache_misses", .config = PERF.COUNT.HW.CACHE_MISSES },
-    .{ .name = "branch_instructions", .config = PERF.COUNT.HW.BRANCH_INSTRUCTIONS },
     .{ .name = "branch_misses", .config = PERF.COUNT.HW.BRANCH_MISSES },
 };
 
@@ -169,8 +166,7 @@ pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
             .instructions = readPerfFd(perf_fds[1]),
             .cache_references = readPerfFd(perf_fds[2]),
             .cache_misses = readPerfFd(perf_fds[3]),
-            .branch_instructions = readPerfFd(perf_fds[4]),
-            .branch_misses = readPerfFd(perf_fds[5]),
+            .branch_misses = readPerfFd(perf_fds[4]),
         };
         sample_index += 1;
     }
@@ -182,7 +178,6 @@ pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
     const instructions = Measurement.compute(all_samples, "instructions");
     const cache_references = Measurement.compute(all_samples, "cache_references");
     const cache_misses = Measurement.compute(all_samples, "cache_misses");
-    const branch_instructions = Measurement.compute(all_samples, "branch_instructions");
     const branch_misses = Measurement.compute(all_samples, "branch_misses");
 
     const final_rusage = std.os.getrusage(rusage_who);
@@ -196,7 +191,6 @@ pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
             .instructions = instructions,
             .cache_references = cache_references,
             .cache_misses = cache_misses,
-            .branch_instructions = branch_instructions,
             .branch_misses = branch_misses,
             .maxrss = @bitCast(usize, final_rusage.maxrss),
         },
