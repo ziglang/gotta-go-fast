@@ -108,19 +108,25 @@ var perf_fds = [1]fd_t{-1} ** perf_measurements.len;
 
 pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
     const rusage_who: i32 = if (options.use_child_process) rusage.CHILDREN else rusage.SELF;
+    const flags: u64 = if (options.use_child_process)
+        (1 << 0) | // disabled
+            (1 << 5) | // exclude_kernel
+            (1 << 6) | // exclude_hv
+            (1 << 1) | // inherit
+            (1 << 12) | // enable_on_exec
+            0
+    else
+        (1 << 0) | // disabled
+            (1 << 5) | // exclude_kernel
+            (1 << 6) | // exclude_hv
+            0;
 
     // Set up perf measurements.
     for (perf_measurements) |measurement, i| {
         var attr: perf_event_attr = .{
             .type = PERF.TYPE.HARDWARE,
             .config = @enumToInt(measurement.config),
-            .flags = .{
-                .disabled = true,
-                .exclude_kernel = true,
-                .exclude_hv = true,
-                .inherit = options.use_child_process,
-                .enable_on_exec = options.use_child_process,
-            },
+            .flags = flags,
         };
         perf_fds[i] = perf_event_open(&attr, 0, -1, perf_fds[0], PERF.FLAG.FD_CLOEXEC) catch |err| {
             std.debug.panic("unable to open perf event: {s}\n", .{@errorName(err)});
@@ -265,78 +271,77 @@ pub const perf_event_attr = extern struct {
     sample_type: u64 = 0,
     read_format: u64 = 0,
 
-    flags: packed struct {
-        /// off by default
-        disabled: bool = false,
-        /// children inherit it
-        inherit: bool = false,
-        /// must always be on PMU
-        pinned: bool = false,
-        /// only group on PMU
-        exclusive: bool = false,
-        /// don't count user
-        exclude_user: bool = false,
-        /// ditto kernel
-        exclude_kernel: bool = false,
-        /// ditto hypervisor
-        exclude_hv: bool = false,
-        /// don't count when idle
-        exclude_idle: bool = false,
-        /// include mmap data
-        mmap: bool = false,
-        /// include comm data
-        comm: bool = false,
-        /// use freq, not period
-        freq: bool = false,
-        /// per task counts
-        inherit_stat: bool = false,
-        /// next exec enables
-        enable_on_exec: bool = false,
-        /// trace fork/exit
-        task: bool = false,
-        /// wakeup_watermark
-        watermark: bool = false,
-        /// precise_ip:
-        ///
-        ///  0 - SAMPLE_IP can have arbitrary skid
-        ///  1 - SAMPLE_IP must have constant skid
-        ///  2 - SAMPLE_IP requested to have 0 skid
-        ///  3 - SAMPLE_IP must have 0 skid
-        ///
-        ///  See also PERF_RECORD_MISC_EXACT_IP
-        /// skid constraint
-        precise_ip: u2 = 0,
-        /// non-exec mmap data
-        mmap_data: bool = false,
-        /// sample_type all events
-        sample_id_all: bool = false,
+    flags: u64 = 0,
+    //flags: packed struct {
+    //    /// off by default
+    //    disabled: bool = false,
+    //    /// children inherit it
+    //    inherit: bool = false,
+    //    /// must always be on PMU
+    //    pinned: bool = false,
+    //    /// only group on PMU
+    //    exclusive: bool = false,
+    //    /// don't count user
+    //    exclude_user: bool = false,
+    //    /// ditto kernel
+    //    exclude_kernel: bool = false,
+    //    /// ditto hypervisor
+    //    exclude_hv: bool = false,
+    //    /// don't count when idle
+    //    exclude_idle: bool = false,
+    //    /// include mmap data
+    //    mmap: bool = false,
+    //    /// include comm data
+    //    comm: bool = false,
+    //    /// use freq, not period
+    //    freq: bool = false,
+    //    /// per task counts
+    //    inherit_stat: bool = false,
+    //    /// next exec enables
+    //    enable_on_exec: bool = false,
+    //    /// trace fork/exit
+    //    task: bool = false,
+    //    /// wakeup_watermark
+    //    watermark: bool = false,
+    //    /// precise_ip:
+    //    ///
+    //    ///  0 - SAMPLE_IP can have arbitrary skid
+    //    ///  1 - SAMPLE_IP must have constant skid
+    //    ///  2 - SAMPLE_IP requested to have 0 skid
+    //    ///  3 - SAMPLE_IP must have 0 skid
+    //    ///
+    //    ///  See also PERF_RECORD_MISC_EXACT_IP
+    //    /// skid constraint
+    //    precise_ip: u2 = 0,
+    //    /// non-exec mmap data
+    //    mmap_data: bool = false,
+    //    /// sample_type all events
+    //    sample_id_all: bool = false,
 
-        /// don't count in host
-        exclude_host: bool = false,
-        /// don't count in guest
-        exclude_guest: bool = false,
+    //    /// don't count in host
+    //    exclude_host: bool = false,
+    //    /// don't count in guest
+    //    exclude_guest: bool = false,
 
-        /// exclude kernel callchains
-        exclude_callchain_kernel: bool = false,
-        /// exclude user callchains
-        exclude_callchain_user: bool = false,
-        /// include mmap with inode data
-        mmap2: bool = false,
-        /// flag comm events that are due to an exec
-        comm_exec: bool = false,
-        /// use @clockid for time fields
-        use_clockid: bool = false,
-        /// context switch data
-        context_switch: bool = false,
-        /// Write ring buffer from end to beginning
-        write_backward: bool = false,
-        /// include namespaces data
-        namespaces: bool = false,
+    //    /// exclude kernel callchains
+    //    exclude_callchain_kernel: bool = false,
+    //    /// exclude user callchains
+    //    exclude_callchain_user: bool = false,
+    //    /// include mmap with inode data
+    //    mmap2: bool = false,
+    //    /// flag comm events that are due to an exec
+    //    comm_exec: bool = false,
+    //    /// use @clockid for time fields
+    //    use_clockid: bool = false,
+    //    /// context switch data
+    //    context_switch: bool = false,
+    //    /// Write ring buffer from end to beginning
+    //    write_backward: bool = false,
+    //    /// include namespaces data
+    //    namespaces: bool = false,
 
-        // TODO should be u35
-        //__reserved_1: u35 = 0,
-        __reserved_1: u27 = 0,
-    } = .{},
+    //    __reserved_1: u35 = 0,
+    //} = .{},
     /// wakeup every n events, or
     /// bytes before wakeup
     wakeup_events_or_watermark: u32 = 0,
