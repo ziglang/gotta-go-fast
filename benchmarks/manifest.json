@@ -70,5 +70,11 @@
     "kind": "zig-bench",
     "dir": "ast-check",
     "mainPath": "astcheck-sema.zig"
+  },
+  "build-tetris-llvm-x86_64-linux-gnu": {
+    "description": "Compile a simple Tetris game with the LLVM backend for x86_64-linux-gnu",
+    "kind": "zig-bench",
+    "dir": "tetris",
+    "mainPath": "main.zig"
   }
 }

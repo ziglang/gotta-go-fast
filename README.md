@@ -119,7 +119,8 @@ updating `records.csv` with the new rows.
 First add an entry in `manifest.json`. Next, you can test it like this:
 
 ```
-zig run bench.zig --pkg-begin app ./benchmarks/foo/bar.zig --pkg-end -O ReleaseFast -- zig
+cd benchmarks/foo
+zig run ../../bench.zig --pkg-begin app bar.zig --pkg-end -O ReleaseFast -- zig
 ```
 
 ## Empty CSV File
