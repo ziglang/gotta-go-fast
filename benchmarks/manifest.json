@@ -72,9 +72,21 @@
     "mainPath": "astcheck-sema.zig"
   },
   "build-tetris-llvm-x86_64-linux-gnu": {
-    "description": "Compile a simple Tetris game with the LLVM backend for x86_64-linux-gnu",
+    "description": "Compile a simple Tetris game with the LLVM backend in ReleaseFast mode for x86_64-linux-gnu",
     "kind": "zig-bench",
     "dir": "tetris",
     "mainPath": "main.zig"
+  },
+  "build-hello-world-x86_64-linux": {
+    "description": "Compile a simple Hello World program with the x86_64 backend in Debug mode for Linux",
+    "kind": "zig-bench",
+    "dir": "hello-world",
+    "mainPath": "main-x86_64-linux.zig"
+  },
+  "build-hello-world-aarch64-linux": {
+    "description": "Compile a simple Hello World program with the aarch64 backend in Debug mode for Linux",
+    "kind": "zig-bench",
+    "dir": "hello-world",
+    "mainPath": "main-aarch64-linux.zig"
   }
 }
