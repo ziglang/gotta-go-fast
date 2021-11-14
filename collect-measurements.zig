@@ -369,7 +369,8 @@ fn runBenchmarks(
     const timestamp = @intCast(u64, std.time.timestamp());
 
     // cd benchmarks/self-hosted-parser
-    // zig run --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end ../../bench.zig
+    // zig build-exe --main-pkg-path ../.. --pkg-begin app main.zig --pkg-end ../../bench.zig --enable-cache
+    // ./../../zig-cache/path/to/bench zig
     var benchmarks_it = manifest.Object.iterator();
     while (benchmarks_it.next()) |entry| {
         const benchmark_name = entry.key_ptr.*;
@@ -389,11 +390,22 @@ fn runBenchmarks(
             .{ benchmark_name, std.fmt.fmtSliceHexLower(&commit) },
         );
 
-        var main_argv = std.ArrayList([]const u8).init(gpa);
-        defer main_argv.deinit();
-        try appendBenchArgs(&main_argv, zig_exe, abs_main_path, "../../bench.zig");
+        // Compile first to ensure that it doesn't affect the rusage stats
+        var compile_argv = std.ArrayList([]const u8).init(gpa);
+        defer compile_argv.deinit();
+        try appendBenchBuildArgs(&compile_argv, zig_exe, abs_main_path, "../../bench.zig");
 
-        const main_stdout = try execCapture(gpa, main_argv.items, .{ .cwd = bench_cwd });
+        const compile_stdout = try execCapture(gpa, compile_argv.items, .{ .cwd = bench_cwd });
+        defer gpa.free(compile_stdout);
+
+        // Because we compiled with --enable-cache, the path to the cache directory was printed
+        // to stdout. We can append `./` to the front and `bench` to the end to execute it
+        const trimmed_output = std.mem.trimRight(u8, compile_stdout, "\r\n");
+        const main_exe = try std.fs.path.join(gpa, &.{ ".", trimmed_output, "bench" });
+        defer gpa.free(main_exe);
+        var main_argv = &[_][]const u8{ main_exe, zig_exe };
+
+        const main_stdout = try execCapture(gpa, main_argv, .{ .cwd = bench_cwd });
         defer gpa.free(main_stdout);
 
         var bench_parser = json.Parser.init(gpa, false);
@@ -429,7 +441,7 @@ fn runBenchmarks(
     }
 }
 
-fn appendBenchArgs(
+fn appendBenchBuildArgs(
     list: *std.ArrayList([]const u8),
     zig_exe: []const u8,
     main_path: []const u8,
@@ -437,13 +449,13 @@ fn appendBenchArgs(
 ) !void {
     try list.ensureCapacity(20);
     list.appendSliceAssumeCapacity(&[_][]const u8{
-        zig_exe,           "run",
+        zig_exe,           "build-exe",
         "--main-pkg-path", "../..",
         "--pkg-begin",     "app",
         main_path,         "--pkg-end",
         "-O",              "ReleaseFast",
+        "--enable-cache",  bench_zig,
     });
-    list.appendSliceAssumeCapacity(&[_][]const u8{ bench_zig, "--", zig_exe });
 }
 
 fn exec(
