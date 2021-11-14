@@ -118,18 +118,6 @@ pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
             (1 << 6) | // exclude_hv
             0;
 
-    // Set up perf measurements.
-    for (perf_measurements) |measurement, i| {
-        var attr: perf_event_attr = .{
-            .type = PERF.TYPE.HARDWARE,
-            .config = @enumToInt(measurement.config),
-            .flags = flags,
-        };
-        perf_fds[i] = perf_event_open(&attr, 0, -1, perf_fds[0], PERF.FLAG.FD_CLOEXEC) catch |err| {
-            std.debug.panic("unable to open perf event: {s}\n", .{@errorName(err)});
-        };
-    }
-
     var sample_index: usize = 0;
     const timer = std.time.Timer.start() catch @panic("need timer to work");
     const first_start = timer.read();
@@ -137,6 +125,17 @@ pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
         (timer.read() - first_start) < max_nano_seconds) and
         sample_index < samples_buf.len)
     {
+        // Set up perf measurements.
+        for (perf_measurements) |measurement, i| {
+            var attr: perf_event_attr = .{
+                .type = PERF.TYPE.HARDWARE,
+                .config = @enumToInt(measurement.config),
+                .flags = flags,
+            };
+            perf_fds[i] = perf_event_open(&attr, 0, -1, perf_fds[0], PERF.FLAG.FD_CLOEXEC) catch |err| {
+                std.debug.panic("unable to open perf event: {s}\n", .{@errorName(err)});
+            };
+        }
         if (options.clear_zig_cache) {
             std.fs.cwd().deleteTree("zig-cache") catch |err| {
                 std.debug.panic("unable to delete zig-cache: {s}", .{@errorName(err)});
@@ -168,6 +167,10 @@ pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
             .cache_misses = readPerfFd(perf_fds[3]),
             .branch_misses = readPerfFd(perf_fds[4]),
         };
+        for (perf_measurements) |_, i| {
+            std.os.close(perf_fds[i]);
+            perf_fds[i] = -1;
+        }
         sample_index += 1;
     }
     const all_samples = samples_buf[0..sample_index];
