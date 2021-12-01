@@ -215,7 +215,7 @@ var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .{};
 pub fn main() !void {
     const gpa = if (builtin.link_libc) std.heap.c_allocator else &general_purpose_allocator.allocator;
     var options: Options = .{
-        .zig_exe = std.mem.spanZ(std.os.argv[1]),
+        .zig_exe = std.mem.sliceTo(std.os.argv[1], 0),
     };
     const context = try app.setup(gpa, &options);
     const results = bench(options, app.run, .{ gpa, context });
