@@ -11,7 +11,7 @@ pub fn run(gpa: *std.mem.Allocator, context: void) !void {
     var cache = std.AutoHashMap(u64, u64).init(gpa);
     defer cache.deinit();
 
-    try cache.ensureCapacity(2050000);
+    try cache.ensureTotalCapacity(2050000);
 
     var x: u64 = 0;
     var maxx: u64 = 0;
