@@ -364,7 +364,7 @@ fn runBenchmarks(
     zig_version: []const u8,
     commit_timestamp: u64,
 ) !void {
-    try records.ensureCapacity(records.items.len + manifest.Object.count() * 2);
+    try records.ensureUnusedCapacity(manifest.Object.count() * 2);
 
     const timestamp = @intCast(u64, std.time.timestamp());
 
@@ -447,7 +447,7 @@ fn appendBenchBuildArgs(
     main_path: []const u8,
     bench_zig: []const u8,
 ) !void {
-    try list.ensureCapacity(20);
+    try list.ensureUnusedCapacity(20);
     list.appendSliceAssumeCapacity(&[_][]const u8{
         zig_exe,           "build-exe",
         "--main-pkg-path", "../..",
