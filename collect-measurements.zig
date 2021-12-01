@@ -57,7 +57,7 @@ const Record = struct {
 };
 
 fn jsonToRecord(
-    arena: *std.mem.Allocator,
+    arena: std.mem.Allocator,
     /// main object
     mo: json.Value,
     timestamp: u64,
@@ -148,7 +148,7 @@ pub fn main() !void {
     const gpa = std.heap.page_allocator;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
-    const arena = &arena_state.allocator;
+    const arena = arena_state.allocator();
 
     const args = try std.process.argsAlloc(arena);
     const records_csv_path = args[1];
@@ -271,7 +271,7 @@ fn fieldIndex(comptime T: type, name: []const u8) ?usize {
     return null;
 }
 
-fn setRecordField(arena: *std.mem.Allocator, record: *Record, data: []const u8, index: usize) void {
+fn setRecordField(arena: std.mem.Allocator, record: *Record, data: []const u8, index: usize) void {
     inline for (@typeInfo(Record).Struct.fields) |field, i| {
         if (i == index) {
             setRecordFieldT(arena, field.field_type, &@field(record, field.name), data);
@@ -281,7 +281,7 @@ fn setRecordField(arena: *std.mem.Allocator, record: *Record, data: []const u8, 
     unreachable;
 }
 
-fn setRecordFieldT(arena: *std.mem.Allocator, comptime T: type, ptr: *T, data: []const u8) void {
+fn setRecordFieldT(arena: std.mem.Allocator, comptime T: type, ptr: *T, data: []const u8) void {
     if (@typeInfo(T) == .Enum) {
         ptr.* = std.meta.stringToEnum(T, data) orelse {
             std.debug.print("bad enum value: {d}\n", .{data});
@@ -354,8 +354,8 @@ fn parseTimestamp(text: []const u8) !u64 {
 }
 
 fn runBenchmarks(
-    gpa: *std.mem.Allocator,
-    arena: *std.mem.Allocator,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
     records: *std.ArrayList(Record),
     commit_table: *CommitTable,
     manifest: json.Value,
@@ -459,7 +459,7 @@ fn appendBenchBuildArgs(
 }
 
 fn exec(
-    gpa: *std.mem.Allocator,
+    gpa: std.mem.Allocator,
     argv: []const []const u8,
     options: struct { cwd: ?[]const u8 = null },
 ) !void {
@@ -485,7 +485,7 @@ fn exec(
 }
 
 fn execCapture(
-    gpa: *std.mem.Allocator,
+    gpa: std.mem.Allocator,
     argv: []const []const u8,
     options: struct { cwd: ?[]const u8 = null },
 ) ![]u8 {

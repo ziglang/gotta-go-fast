@@ -6,7 +6,7 @@ pub fn main() !void {
     const gpa = std.heap.page_allocator;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
-    const arena = &arena_state.allocator;
+    const arena = arena_state.allocator();
 
     const args = try std.process.argsAlloc(arena);
     const records_csv_path = args[1];
@@ -63,7 +63,7 @@ pub fn main() !void {
 }
 
 fn exec(
-    gpa: *std.mem.Allocator,
+    gpa: std.mem.Allocator,
     argv: []const []const u8,
     options: struct { cwd: ?[]const u8 = null },
 ) !void {
@@ -89,7 +89,7 @@ fn exec(
 }
 
 fn execCapture(
-    gpa: *std.mem.Allocator,
+    gpa: std.mem.Allocator,
     argv: []const []const u8,
     options: struct { cwd: ?[]const u8 = null },
 ) ![]u8 {

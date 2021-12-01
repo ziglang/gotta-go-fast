@@ -3,13 +3,13 @@ const bench = @import("root");
 
 var rng = std.rand.DefaultPrng.init(0x1234);
 
-pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !std.rand.Random {
+pub fn setup(gpa: std.mem.Allocator, options: *bench.Options) !std.rand.Random {
     _ = gpa;
     _ = options;
     return rng.random();
 }
 
-pub fn run(gpa: *std.mem.Allocator, random: std.rand.Random) !void {
+pub fn run(gpa: std.mem.Allocator, random: std.rand.Random) !void {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
 

@@ -1,18 +1,18 @@
 const std = @import("std");
 const bench = @import("root");
 
-pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {
+pub fn setup(gpa: std.mem.Allocator, options: *bench.Options) !void {
     _ = gpa;
     _ = options;
 }
 
-pub fn run(gpa: *std.mem.Allocator, context: void) !void {
+pub fn run(gpa: std.mem.Allocator, context: void) !void {
     _ = context;
     // Benchmarks ported from https://github.com/martinus/map_benchmark
     randomDistinct(gpa);
 }
 
-fn randomDistinct(gpa: *std.mem.Allocator) void {
+fn randomDistinct(gpa: std.mem.Allocator) void {
     const num_iters = 5_000_000;
     const _5distinct = num_iters / 20;
     const _25distinct = num_iters / 4;

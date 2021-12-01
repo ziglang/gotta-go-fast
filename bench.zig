@@ -223,7 +223,7 @@ pub fn main() !void {
 }
 
 pub fn exec(
-    gpa: *std.mem.Allocator,
+    gpa: std.mem.Allocator,
     argv: []const []const u8,
     options: struct {
         cwd: ?[]const u8 = null,

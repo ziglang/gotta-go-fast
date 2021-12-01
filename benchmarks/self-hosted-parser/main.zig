@@ -2,12 +2,12 @@ const std = @import("std");
 const bench = @import("root");
 const log = std.log;
 
-pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {
+pub fn setup(gpa: std.mem.Allocator, options: *bench.Options) !void {
     _ = gpa;
     _ = options;
 }
 
-pub fn run(gpa: *std.mem.Allocator, context: void) !void {
+pub fn run(gpa: std.mem.Allocator, context: void) !void {
     _ = context;
     var input_dir = try std.fs.cwd().openDir("input_dir", .{ .iterate = true });
     defer input_dir.close();

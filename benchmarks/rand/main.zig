@@ -3,12 +3,12 @@ const bench = @import("root");
 
 const Rng = std.rand.Xoroshiro128; // DefaultPrng at time of writing
 
-pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {
+pub fn setup(gpa: std.mem.Allocator, options: *bench.Options) !void {
     _ = gpa;
     _ = options;
 }
 
-pub fn run(gpa: *std.mem.Allocator, context: void) !void {
+pub fn run(gpa: std.mem.Allocator, context: void) !void {
     _ = context;
     const byte_count = 100_000_000;
 
@@ -25,7 +25,7 @@ pub fn run(gpa: *std.mem.Allocator, context: void) !void {
     }
 }
 
-fn rawBytes(gpa: *std.mem.Allocator, size: usize) !void {
+fn rawBytes(gpa: std.mem.Allocator, size: usize) !void {
     var buf = try gpa.alignedAlloc(u8, 8, size);
     defer gpa.free(buf);
 

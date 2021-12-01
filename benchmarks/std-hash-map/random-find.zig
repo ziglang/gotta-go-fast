@@ -1,12 +1,12 @@
 const std = @import("std");
 const bench = @import("root");
 
-pub fn setup(gpa: *std.mem.Allocator, options: *bench.Options) !void {
+pub fn setup(gpa: std.mem.Allocator, options: *bench.Options) !void {
     _ = gpa;
     _ = options;
 }
 
-pub fn run(gpa: *std.mem.Allocator, context: void) !void {
+pub fn run(gpa: std.mem.Allocator, context: void) !void {
     _ = context;
     // Benchmarks ported from https://github.com/martinus/map_benchmark
     const lower32bit = 0x00000000FFFFFFFF;
@@ -25,7 +25,7 @@ pub fn run(gpa: *std.mem.Allocator, context: void) !void {
     randomFind(gpa, 0, upper32bit, num_inserts, find_per_insert, 99677826);
 }
 
-fn randomFind(gpa: *std.mem.Allocator, num_rand: u32, mask: u64, num_insert: u64, find_per_insert: u64, expected: u64) void {
+fn randomFind(gpa: std.mem.Allocator, num_rand: u32, mask: u64, num_insert: u64, find_per_insert: u64, expected: u64) void {
     const total = 4;
 
     const find_per_iter = find_per_insert * total;
