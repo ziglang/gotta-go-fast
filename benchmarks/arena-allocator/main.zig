@@ -10,8 +10,9 @@ pub fn setup(gpa: std.mem.Allocator, options: *bench.Options) !std.rand.Random {
 }
 
 pub fn run(gpa: std.mem.Allocator, random: std.rand.Random) !void {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
     const sizes =
         // Some few weird sizes
@@ -33,7 +34,7 @@ pub fn run(gpa: std.mem.Allocator, random: std.rand.Random) !void {
     var i: usize = 0;
     while (i < 10000) : (i += 1) {
         const alloc_size = random.uintAtMostBiased(usize, sizes.len);
-        const slice = try arena.allocator.alloc(u8, alloc_size);
+        const slice = try arena.alloc(u8, alloc_size);
         @memset(slice.ptr, 0xff, slice.len);
     }
 }
