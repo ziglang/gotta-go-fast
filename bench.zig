@@ -213,7 +213,7 @@ pub const Options = struct {
 var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .{};
 
 pub fn main() !void {
-    const gpa = if (builtin.link_libc) std.heap.c_allocator else &general_purpose_allocator.allocator;
+    const gpa = if (builtin.link_libc) std.heap.c_allocator else general_purpose_allocator.allocator();
     var options: Options = .{
         .zig_exe = std.mem.sliceTo(std.os.argv[1], 0),
     };
