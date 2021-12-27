@@ -665,7 +665,7 @@ pub const IO_Uring = struct {
         const res = linux.io_uring_register(
             self.fd,
             .REGISTER_FILES,
-            @ptrCast(*const c_void, fds.ptr),
+            @ptrCast(*const anyopaque, fds.ptr),
             @intCast(u32, fds.len),
         );
         try handle_registration_result(res);
@@ -679,7 +679,7 @@ pub const IO_Uring = struct {
         const res = linux.io_uring_register(
             self.fd,
             .REGISTER_EVENTFD,
-            @ptrCast(*const c_void, &fd),
+            @ptrCast(*const anyopaque, &fd),
             1,
         );
         try handle_registration_result(res);
@@ -694,7 +694,7 @@ pub const IO_Uring = struct {
         const res = linux.io_uring_register(
             self.fd,
             .REGISTER_EVENTFD_ASYNC,
-            @ptrCast(*const c_void, &fd),
+            @ptrCast(*const anyopaque, &fd),
             1,
         );
         try handle_registration_result(res);
@@ -1081,7 +1081,7 @@ pub fn io_uring_prep_poll_add(
     fd: os.fd_t,
     poll_mask: u32,
 ) void {
-    io_uring_prep_rw(.POLL_ADD, sqe, fd, @ptrToInt(@as(?*c_void, null)), 0, 0);
+    io_uring_prep_rw(.POLL_ADD, sqe, fd, @ptrToInt(@as(?*anyopaque, null)), 0, 0);
     sqe.rw_flags = std.mem.nativeToLittle(u32, poll_mask);
 }
 

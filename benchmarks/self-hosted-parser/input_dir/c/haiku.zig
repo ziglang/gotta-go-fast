@@ -10,7 +10,7 @@ pub const _errno = _errnop;
 
 pub extern "c" fn find_directory(which: c_int, volume: i32, createIt: bool, path_ptr: [*]u8, length: i32) u64;
 
-pub extern "c" fn find_thread(thread_name: ?*c_void) i32;
+pub extern "c" fn find_thread(thread_name: ?*anyopaque) i32;
 
 pub extern "c" fn get_system_info(system_info: *system_info) usize;
 
@@ -37,7 +37,7 @@ pub const pthread_attr_t = extern struct {
     __sched_priority: i32,
     __stack_size: i32,
     __guard_size: i32,
-    __stack_address: ?*c_void,
+    __stack_address: ?*anyopaque,
 };
 
 pub const pthread_mutex_t = extern struct {
@@ -50,7 +50,7 @@ pub const pthread_mutex_t = extern struct {
 pub const pthread_cond_t = extern struct {
     flags: u32 = 0,
     unused: i32 = -42,
-    mutex: ?*c_void = null,
+    mutex: ?*anyopaque = null,
     waiter_count: i32 = 0,
     lock: i32 = 0,
 };
@@ -61,7 +61,7 @@ pub const pthread_rwlock_t = extern struct {
     lock_count: i32 = 0,
     reader_count: i32 = 0,
     writer_count: i32 = 0,
-    waiters: [2]?*c_void = [_]?*c_void{ null, null },
+    waiters: [2]?*anyopaque = [_]?*anyopaque{ null, null },
 };
 
 pub const EAI = enum(c_int) {
@@ -190,7 +190,7 @@ pub const msghdr = extern struct {
     msg_iovlen: i32,
 
     /// ancillary data
-    msg_control: ?*c_void,
+    msg_control: ?*anyopaque,
 
     /// ancillary data buffer len
     msg_controllen: socklen_t,
@@ -213,7 +213,7 @@ pub const msghdr_const = extern struct {
     msg_iovlen: i32,
 
     /// ancillary data
-    msg_control: ?*c_void,
+    msg_control: ?*anyopaque,
 
     /// ancillary data buffer len
     msg_controllen: socklen_t,
@@ -287,13 +287,13 @@ pub const image_info = extern struct {
     type: u32,
     sequence: i32,
     init_order: i32,
-    init_routine: *c_void,
-    term_routine: *c_void,
+    init_routine: *anyopaque,
+    term_routine: *anyopaque,
     device: i32,
     node: i32,
     name: [1024]u8,
-    text: *c_void,
-    data: *c_void,
+    text: *anyopaque,
+    data: *anyopaque,
     text_size: i32,
     data_size: i32,
     api_version: i32,
@@ -397,7 +397,7 @@ pub const CLOCK = struct {
 };
 
 pub const MAP = struct {
-    pub const FAILED = @intToPtr(*c_void, maxInt(usize));
+    pub const FAILED = @intToPtr(*anyopaque, maxInt(usize));
     pub const SHARED = 0x0001;
     pub const PRIVATE = 0x0002;
     pub const FIXED = 0x0010;

@@ -327,7 +327,7 @@ const Completion = Atomic(enum(u8) {
 fn callFn(comptime f: anytype, args: anytype) switch (Impl) {
     WindowsThreadImpl => std.os.windows.DWORD,
     LinuxThreadImpl => u8,
-    PosixThreadImpl => ?*c_void,
+    PosixThreadImpl => ?*anyopaque,
     else => unreachable,
 } {
     const default_value = if (Impl == PosixThreadImpl) null else 0;
@@ -482,7 +482,7 @@ const WindowsThreadImpl = struct {
             null,
             stack_size,
             Instance.entryFn,
-            @ptrCast(*c_void, instance),
+            @ptrCast(*anyopaque, instance),
             0,
             null,
         ) orelse {
@@ -603,7 +603,7 @@ const PosixThreadImpl = struct {
         const allocator = std.heap.c_allocator;
 
         const Instance = struct {
-            fn entryFn(raw_arg: ?*c_void) callconv(.C) ?*c_void {
+            fn entryFn(raw_arg: ?*anyopaque) callconv(.C) ?*anyopaque {
                 // @alignCast() below doesn't support zero-sized-types (ZST)
                 if (@sizeOf(Args) < 1) {
                     return callFn(f, @as(Args, undefined));
@@ -633,7 +633,7 @@ const PosixThreadImpl = struct {
             &handle,
             &attr,
             Instance.entryFn,
-            if (@sizeOf(Args) > 1) @ptrCast(*c_void, args_ptr) else undefined,
+            if (@sizeOf(Args) > 1) @ptrCast(*anyopaque, args_ptr) else undefined,
         )) {
             .SUCCESS => return Impl{ .handle = handle },
             .AGAIN => return error.SystemResources,

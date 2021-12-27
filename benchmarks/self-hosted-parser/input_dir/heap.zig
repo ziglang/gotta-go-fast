@@ -58,7 +58,7 @@ const CAllocator = struct {
             // multiple of the pointer size
             const eff_alignment = std.math.max(alignment, @sizeOf(usize));
 
-            var aligned_ptr: ?*c_void = undefined;
+            var aligned_ptr: ?*anyopaque = undefined;
             if (c.posix_memalign(&aligned_ptr, eff_alignment, len) != 0)
                 return null;
 
@@ -285,7 +285,7 @@ const PageAllocator = struct {
                 // VirtualAlloc call to fail. To handle this, we will retry
                 // until it succeeds.
                 const ptr = w.VirtualAlloc(
-                    @intToPtr(*c_void, aligned_addr),
+                    @intToPtr(*anyopaque, aligned_addr),
                     aligned_len,
                     w.MEM_COMMIT | w.MEM_RESERVE,
                     w.PAGE_READWRITE,
@@ -367,7 +367,7 @@ const PageAllocator = struct {
                     // For shrinking that is not releasing, we will only
                     // decommit the pages not needed anymore.
                     w.VirtualFree(
-                        @intToPtr(*c_void, new_addr_end),
+                        @intToPtr(*anyopaque, new_addr_end),
                         old_addr_end - new_addr_end,
                         w.MEM_DECOMMIT,
                     );
@@ -643,7 +643,7 @@ pub const HeapAllocator = switch (builtin.os.tag) {
             _ = return_address;
             const self = @fieldParentPtr(HeapAllocator, "allocator", allocator);
             if (new_size == 0) {
-                os.windows.HeapFree(self.heap_handle.?, 0, @intToPtr(*c_void, getRecordPtr(buf).*));
+                os.windows.HeapFree(self.heap_handle.?, 0, @intToPtr(*anyopaque, getRecordPtr(buf).*));
                 return 0;
             }
 
@@ -653,10 +653,10 @@ pub const HeapAllocator = switch (builtin.os.tag) {
             const new_ptr = os.windows.kernel32.HeapReAlloc(
                 self.heap_handle.?,
                 os.windows.HEAP_REALLOC_IN_PLACE_ONLY,
-                @intToPtr(*c_void, root_addr),
+                @intToPtr(*anyopaque, root_addr),
                 amt,
             ) orelse return error.OutOfMemory;
-            assert(new_ptr == @intToPtr(*c_void, root_addr));
+            assert(new_ptr == @intToPtr(*anyopaque, root_addr));
             const return_len = init: {
                 if (len_align == 0) break :init new_size;
                 const full_len = os.windows.kernel32.HeapSize(self.heap_handle.?, 0, new_ptr);
