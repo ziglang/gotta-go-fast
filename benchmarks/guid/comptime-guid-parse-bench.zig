@@ -9,6 +9,6 @@ pub fn setup(gpa: std.mem.Allocator, options: *bench.Options) ![]const u8 {
 
 pub fn run(gpa: std.mem.Allocator, zig_exe: []const u8) !void {
     return bench.exec(gpa, &[_][]const u8{
-        zig_exe, "build-exe", "comptime-guid-parse.zig",
+        zig_exe, "build-obj", "comptime-guid-parse.zig",
     }, .{});
 }
