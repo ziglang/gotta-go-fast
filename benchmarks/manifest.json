@@ -88,7 +88,7 @@
     "kind": "zig-bench",
     "dir": "hello-world",
     "mainPath": "main-aarch64-linux.zig"
-  }
+  },
   "comptime-guid-parse": {
     "description": "Parse a GUID at comptime",
     "kind": "zig-bench",
