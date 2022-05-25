@@ -123,6 +123,10 @@ cd benchmarks/foo
 zig run ../../bench.zig --pkg-begin app bar.zig --pkg-end -O ReleaseFast -- zig
 ```
 
+Use an absolute path for the ending `zig` argument which is in a subdirectory
+of the zig source tree used to build the zig binary. Some of the benchmarks
+want to learn the zig source checkout path in order to test stuff.
+
 ## Empty CSV File
 
 Handy to copy paste to start a new table.

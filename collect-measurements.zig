@@ -490,8 +490,7 @@ fn execCapture(
     options: struct { cwd: ?[]const u8 = null },
 ) ![]u8 {
     //std.debug.print("exec argv[0]={} cwd={}\n", .{argv[0], options.cwd});
-    const child = try std.ChildProcess.init(argv, gpa);
-    defer child.deinit();
+    var child = std.ChildProcess.init(argv, gpa);
 
     child.stdin_behavior = .Inherit;
     child.stdout_behavior = .Pipe;

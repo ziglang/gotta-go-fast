@@ -94,5 +94,11 @@
     "kind": "zig-bench",
     "dir": "guid",
     "mainPath": "comptime-guid-parse-bench.zig"
+  },
+  "build-self-hosted": {
+    "description": "Use stage2 to build stage3",
+    "kind": "zig-bench",
+    "dir": "build-self-hosted",
+    "mainPath": "stage2.zig"
   }
 }

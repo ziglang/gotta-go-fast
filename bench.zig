@@ -119,7 +119,7 @@ pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
             0;
 
     var sample_index: usize = 0;
-    const timer = std.time.Timer.start() catch @panic("need timer to work");
+    var timer = std.time.Timer.start() catch @panic("need timer to work");
     const first_start = timer.read();
     while ((sample_index < 3 or
         (timer.read() - first_start) < max_nano_seconds) and
@@ -202,6 +202,7 @@ pub fn bench(options: Options, comptime func: anytype, args: anytype) Results {
 
 pub const Options = struct {
     zig_exe: []const u8,
+    zig_src_root: []const u8,
     clear_zig_cache: bool = false,
     use_child_process: bool = false,
 
@@ -214,8 +215,40 @@ var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .{};
 
 pub fn main() !void {
     const gpa = if (builtin.link_libc) std.heap.c_allocator else general_purpose_allocator.allocator();
+    const zig_exe = std.mem.sliceTo(std.os.argv[1], 0);
+
+    // Find zig source root based on zig exe.
+    const zig_src_root = r: {
+        var cur_path: []const u8 = zig_exe;
+        const cwd = std.fs.cwd();
+        while (std.fs.path.dirname(cur_path)) |dirname| : (cur_path = dirname) {
+            var base_dir = cwd.openDir(dirname, .{}) catch |err| {
+                std.log.err("unable to find zig source root from '{s}': opening '{s}': {s}", .{
+                    dirname, zig_exe, @errorName(err),
+                });
+                std.process.exit(1);
+            };
+            defer base_dir.close();
+
+            const file = base_dir.openFile("build.zig", .{}) catch |err| switch (err) {
+                error.FileNotFound => continue,
+                else => {
+                    std.log.err("unable to find zig source root from '{s}': opening build.zig: {s}", .{
+                        zig_exe, @errorName(err),
+                    });
+                    std.process.exit(1);
+                },
+            };
+            file.close();
+            break :r dirname;
+        }
+        std.log.err("unable to find zig source root from '{s}'", .{zig_exe});
+        std.process.exit(1);
+    };
+
     var options: Options = .{
-        .zig_exe = std.mem.sliceTo(std.os.argv[1], 0),
+        .zig_exe = zig_exe,
+        .zig_src_root = zig_src_root,
     };
     const context = try app.setup(gpa, &options);
     const results = bench(options, app.run, .{ gpa, context });
@@ -232,9 +265,7 @@ pub fn exec(
         stderr_behavior: std.ChildProcess.StdIo = .Inherit,
     },
 ) !void {
-    const child = try std.ChildProcess.init(argv, gpa);
-    defer child.deinit();
-
+    var child = std.ChildProcess.init(argv, gpa);
     child.stdin_behavior = options.stdin_behavior;
     child.stdout_behavior = options.stdout_behavior;
     child.stderr_behavior = options.stderr_behavior;
