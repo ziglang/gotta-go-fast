@@ -1681,7 +1681,7 @@ pub const R_X86_64_TLSDESC = 36;
 pub const R_X86_64_IRELATIVE = 37;
 /// 64-bit adjust by program base
 pub const R_X86_64_RELATIVE64 = 38;
-/// 39 Reserved was R_X86_64_PC32_BND 
+/// 39 Reserved was R_X86_64_PC32_BND
 /// 40 Reserved was R_X86_64_PLT32_BND
 /// Load from 32 bit signed pc relative offset to GOT entry without REX prefix, relaxable
 pub const R_X86_64_GOTPCRELX = 41;

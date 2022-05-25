@@ -18,7 +18,7 @@ pub fn main() !void {
         zig_git_path, "build-backfill",
     });
     const new_zig_exe = try fs.path.join(arena, &[_][]const u8{
-        backfill_zig_build_dir, "new", "bin", "zig",
+        backfill_zig_build_dir, "stage1", "bin", "zig",
     });
     const old_zig_exe = try fs.path.join(arena, &[_][]const u8{
         backfill_zig_build_dir, "zig",

@@ -316,7 +316,7 @@ const crypt_format = struct {
         try out.writeAll(hash_str);
     }
 
-    /// Custom codec that maps 6 bits into 8 like regular Base64, but uses its own alphabet, 
+    /// Custom codec that maps 6 bits into 8 like regular Base64, but uses its own alphabet,
     /// encodes bits in little-endian, and can also encode integers.
     fn CustomB64Codec(comptime map: [64]u8) type {
         return struct {

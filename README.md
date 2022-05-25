@@ -99,16 +99,22 @@ that the frontend HTML+JavaScript can fetch them and display the information.
 
 ## Backfilling Data
 
-`$ZIG_GIT_SRC` must be a git clone of zig, with two build folders configured with
-cmake already. Both should be release builds of zig (`-DCMAKE_BUILD_TYPE=Release`).
+`$ZIG_GIT_SRC` must be a git clone of zig, with a `build-backfill` folder
+configured with CMake already. It needs to be configured this way:
 
- * `build-release`
- * `build-backfill`
+```
+cmake .. -DCMAKE_BUILD_TYPE=Release -GNinja
+ninja install
+```
+
+This `ninja install` creates `stage1/bin/zig` which is left untouched, and then
+`ninja` (without the install argument) is used for older zig versions when going
+through the queue.
 
 `queue.txt` is a file containing whitespace-separated git commit hashes.
 
 ```
-$ZIG run backfill.zig -- records.csv $ZIG_GIT_SRC queue.txt
+$ZIG_GIT_SRC/build-release/bin/zig run backfill.zig -- records.csv $ZIG_GIT_SRC queue.txt
 ```
 
 This will check out each commit one-by-one and run `collect-measurements.zig`,

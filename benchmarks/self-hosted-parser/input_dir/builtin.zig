@@ -1,37 +1,14 @@
 const builtin = @import("builtin");
 
-// TODO delete these after releasing 0.9.0
-
-pub const zig_version = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const zig_is_stage2 = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const output_mode = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const link_mode = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const is_test = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const single_threaded = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const abi = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const cpu = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const os = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const target = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const object_format = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const mode = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const link_libc = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const link_libcpp = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const have_error_return_tracing = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const valgrind_support = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const position_independent_code = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const position_independent_executable = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const strip_debug_info = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-pub const code_model = @compileError("get this from @import(\"builtin\") instead of std.builtin");
-
 /// `explicit_subsystem` is missing when the subsystem is automatically detected,
 /// so Zig standard library has the subsystem detection logic here. This should generally be
 /// used rather than `explicit_subsystem`.
 /// On non-Windows targets, this is `null`.
 pub const subsystem: ?std.Target.SubSystem = blk: {
     if (@hasDecl(builtin, "explicit_subsystem")) break :blk builtin.explicit_subsystem;
-    switch (os.tag) {
+    switch (builtin.os.tag) {
         .windows => {
-            if (is_test) {
+            if (builtin.is_test) {
                 break :blk std.Target.SubSystem.Console;
             }
             if (@hasDecl(root, "main") or
@@ -61,6 +38,11 @@ pub const StackTrace = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        // TODO: re-evaluate whether to use format() methods at all.
+        // Until then, avoid an error when using GeneralPurposeAllocator with WebAssembly
+        // where it tries to call detectTTYConfig here.
+        if (builtin.os.tag == .freestanding) return;
+
         _ = fmt;
         _ = options;
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -70,7 +52,7 @@ pub const StackTrace = struct {
         };
         const tty_config = std.debug.detectTTYConfig();
         try writer.writeAll("\n");
-        std.debug.writeStackTrace(self, writer, &arena.allocator, debug_info, tty_config) catch |err| {
+        std.debug.writeStackTrace(self, writer, arena.allocator(), debug_info, tty_config) catch |err| {
             try writer.print("Unable to print stack trace: {s}\n", .{@errorName(err)});
         };
         try writer.writeAll("\n");
@@ -84,6 +66,14 @@ pub const GlobalLinkage = enum {
     Strong,
     Weak,
     LinkOnce,
+};
+
+/// This data structure is used by the Zig language code generation and
+/// therefore must be kept in sync with the compiler implementation.
+pub const SymbolVisibility = enum {
+    default,
+    hidden,
+    protected,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -165,6 +155,8 @@ pub const CallingConvention = enum {
     AAPCS,
     AAPCSVFP,
     SysV,
+    Win64,
+    PtxKernel,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -174,6 +166,12 @@ pub const AddressSpace = enum {
     gs,
     fs,
     ss,
+    // GPU address spaces
+    global,
+    constant,
+    param,
+    shared,
+    local,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -185,11 +183,14 @@ pub const SourceLocation = struct {
     column: u32,
 };
 
-pub const TypeId = std.meta.Tag(TypeInfo);
+pub const TypeId = std.meta.Tag(Type);
+
+/// TODO deprecated, use `Type`
+pub const TypeInfo = Type;
 
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
-pub const TypeInfo = union(enum) {
+pub const Type = union(enum) {
     Type: void,
     Void: void,
     Bool: void,
@@ -220,12 +221,14 @@ pub const TypeInfo = union(enum) {
     /// therefore must be kept in sync with the compiler implementation.
     pub const Int = struct {
         signedness: Signedness,
+        /// TODO make this u16 instead of comptime_int
         bits: comptime_int,
     };
 
     /// This data structure is used by the Zig language code generation and
     /// therefore must be kept in sync with the compiler implementation.
     pub const Float = struct {
+        /// TODO make this u16 instead of comptime_int
         bits: comptime_int,
     };
 
@@ -235,16 +238,16 @@ pub const TypeInfo = union(enum) {
         size: Size,
         is_const: bool,
         is_volatile: bool,
+        /// TODO make this u16 instead of comptime_int
         alignment: comptime_int,
         address_space: AddressSpace,
         child: type,
         is_allowzero: bool,
 
-        /// This field is an optional type.
         /// The type of the sentinel is the element type of the pointer, which is
         /// the value of the `child` field in this struct. However there is no way
-        /// to refer to that type here, so we use `anytype`.
-        sentinel: anytype,
+        /// to refer to that type here, so we use pointer to `anyopaque`.
+        sentinel: ?*const anyopaque,
 
         /// This data structure is used by the Zig language code generation and
         /// therefore must be kept in sync with the compiler implementation.
@@ -262,11 +265,10 @@ pub const TypeInfo = union(enum) {
         len: comptime_int,
         child: type,
 
-        /// This field is an optional type.
         /// The type of the sentinel is the element type of the array, which is
         /// the value of the `child` field in this struct. However there is no way
-        /// to refer to that type here, so we use `anytype`.
-        sentinel: anytype,
+        /// to refer to that type here, so we use pointer to `anyopaque`.
+        sentinel: ?*const anyopaque,
     };
 
     /// This data structure is used by the Zig language code generation and
@@ -281,8 +283,9 @@ pub const TypeInfo = union(enum) {
     /// therefore must be kept in sync with the compiler implementation.
     pub const StructField = struct {
         name: []const u8,
+        /// TODO rename to `type`
         field_type: type,
-        default_value: anytype,
+        default_value: ?*const anyopaque,
         is_comptime: bool,
         alignment: comptime_int,
     };
@@ -329,6 +332,7 @@ pub const TypeInfo = union(enum) {
     /// This data structure is used by the Zig language code generation and
     /// therefore must be kept in sync with the compiler implementation.
     pub const Enum = struct {
+        /// TODO enums should no longer have this field in type info.
         layout: ContainerLayout,
         tag_type: type,
         fields: []const EnumField,
@@ -353,13 +357,8 @@ pub const TypeInfo = union(enum) {
         decls: []const Declaration,
     };
 
-    /// This data structure is used by the Zig language code generation and
-    /// therefore must be kept in sync with the compiler implementation.
-    pub const FnArg = struct {
-        is_generic: bool,
-        is_noalias: bool,
-        arg_type: ?type,
-    };
+    /// TODO deprecated use Fn.Param
+    pub const FnArg = Fn.Param;
 
     /// This data structure is used by the Zig language code generation and
     /// therefore must be kept in sync with the compiler implementation.
@@ -368,8 +367,17 @@ pub const TypeInfo = union(enum) {
         alignment: comptime_int,
         is_generic: bool,
         is_var_args: bool,
+        /// TODO change the language spec to make this not optional.
         return_type: ?type,
-        args: []const FnArg,
+        args: []const Param,
+
+        /// This data structure is used by the Zig language code generation and
+        /// therefore must be kept in sync with the compiler implementation.
+        pub const Param = struct {
+            is_generic: bool,
+            is_noalias: bool,
+            arg_type: ?type,
+        };
     };
 
     /// This data structure is used by the Zig language code generation and
@@ -381,7 +389,7 @@ pub const TypeInfo = union(enum) {
     /// This data structure is used by the Zig language code generation and
     /// therefore must be kept in sync with the compiler implementation.
     pub const Frame = struct {
-        function: anytype,
+        function: *const anyopaque,
     };
 
     /// This data structure is used by the Zig language code generation and
@@ -402,28 +410,6 @@ pub const TypeInfo = union(enum) {
     pub const Declaration = struct {
         name: []const u8,
         is_pub: bool,
-        data: Data,
-
-        /// This data structure is used by the Zig language code generation and
-        /// therefore must be kept in sync with the compiler implementation.
-        pub const Data = union(enum) {
-            Type: type,
-            Var: type,
-            Fn: FnDecl,
-
-            /// This data structure is used by the Zig language code generation and
-            /// therefore must be kept in sync with the compiler implementation.
-            pub const FnDecl = struct {
-                fn_type: type,
-                is_noinline: bool,
-                is_var_args: bool,
-                is_extern: bool,
-                is_export: bool,
-                lib_name: ?[]const u8,
-                return_type: type,
-                arg_names: []const []const u8,
-            };
-        };
     };
 };
 
@@ -648,10 +634,36 @@ pub const CallOptions = struct {
 
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
+pub const PrefetchOptions = struct {
+    /// Whether the prefetch should prepare for a read or a write.
+    rw: Rw = .read,
+    /// 0 means no temporal locality. That is, the data can be immediately
+    /// dropped from the cache after it is accessed.
+    ///
+    /// 3 means high temporal locality. That is, the data should be kept in
+    /// the cache as it is likely to be accessed again soon.
+    locality: u2 = 3,
+    /// The cache that the prefetch should be preformed on.
+    cache: Cache = .data,
+
+    pub const Rw = enum(u1) {
+        read,
+        write,
+    };
+
+    pub const Cache = enum(u1) {
+        instruction,
+        data,
+    };
+};
+
+/// This data structure is used by the Zig language code generation and
+/// therefore must be kept in sync with the compiler implementation.
 pub const ExportOptions = struct {
     name: []const u8,
     linkage: GlobalLinkage = .Strong,
     section: ?[]const u8 = null,
+    visibility: SymbolVisibility = .default,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -663,12 +675,76 @@ pub const ExternOptions = struct {
     is_thread_local: bool = false,
 };
 
+/// This enum is set by the compiler and communicates which compiler backend is
+/// used to produce machine code.
+/// Think carefully before deciding to observe this value. Nearly all code should
+/// be agnostic to the backend that implements the language. The use case
+/// to use this value is to **work around problems with compiler implementations.**
+///
+/// Avoid failing the compilation if the compiler backend does not match a
+/// whitelist of backends; rather one should detect that a known problem would
+/// occur in a blacklist of backends.
+///
+/// The enum is nonexhaustive so that alternate Zig language implementations may
+/// choose a number as their tag (please use a random number generator rather
+/// than a "cute" number) and codebases can interact with these values even if
+/// this upstream enum does not have a name for the number. Of course, upstream
+/// is happy to accept pull requests to add Zig implementations to this enum.
+///
+/// This data structure is part of the Zig language specification.
+pub const CompilerBackend = enum(u64) {
+    /// It is allowed for a compiler implementation to not reveal its identity,
+    /// in which case this value is appropriate. Be cool and make sure your
+    /// code supports `other` Zig compilers!
+    other = 0,
+    /// The original Zig compiler created in 2015 by Andrew Kelley.
+    /// Implemented in C++. Uses LLVM.
+    stage1 = 1,
+    /// The reference implementation self-hosted compiler of Zig, using the
+    /// LLVM backend.
+    stage2_llvm = 2,
+    /// The reference implementation self-hosted compiler of Zig, using the
+    /// backend that generates C source code.
+    /// Note that one can observe whether the compilation will output C code
+    /// directly with `object_format` value rather than the `compiler_backend` value.
+    stage2_c = 3,
+    /// The reference implementation self-hosted compiler of Zig, using the
+    /// WebAssembly backend.
+    stage2_wasm = 4,
+    /// The reference implementation self-hosted compiler of Zig, using the
+    /// arm backend.
+    stage2_arm = 5,
+    /// The reference implementation self-hosted compiler of Zig, using the
+    /// x86_64 backend.
+    stage2_x86_64 = 6,
+    /// The reference implementation self-hosted compiler of Zig, using the
+    /// aarch64 backend.
+    stage2_aarch64 = 7,
+    /// The reference implementation self-hosted compiler of Zig, using the
+    /// x86 backend.
+    stage2_x86 = 8,
+    /// The reference implementation self-hosted compiler of Zig, using the
+    /// riscv64 backend.
+    stage2_riscv64 = 9,
+    /// The reference implementation self-hosted compiler of Zig, using the
+    /// sparc64 backend.
+    stage2_sparc64 = 10,
+
+    _,
+};
+
 /// This function type is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
 pub const TestFn = struct {
     name: []const u8,
-    func: fn () anyerror!void,
+    func: testFnProto,
     async_frame_size: ?usize,
+};
+
+/// stage1 is *wrong*. It is not yet updated to support the new function type semantics.
+const testFnProto = switch (builtin.zig_backend) {
+    .stage1 => fn () anyerror!void, // wrong!
+    else => *const fn () anyerror!void,
 };
 
 /// This function type is used by the Zig language code generation and
@@ -688,9 +764,18 @@ else
 /// therefore must be kept in sync with the compiler implementation.
 pub fn default_panic(msg: []const u8, error_return_trace: ?*StackTrace) noreturn {
     @setCold(true);
+
     // Until self-hosted catches up with stage1 language features, we have a simpler
     // default panic function:
-    if (builtin.zig_is_stage2) {
+    if (builtin.zig_backend == .stage2_c or
+        builtin.zig_backend == .stage2_wasm or
+        builtin.zig_backend == .stage2_arm or
+        builtin.zig_backend == .stage2_aarch64 or
+        builtin.zig_backend == .stage2_x86_64 or
+        builtin.zig_backend == .stage2_x86 or
+        builtin.zig_backend == .stage2_riscv64 or
+        builtin.zig_backend == .stage2_sparc64)
+    {
         while (true) {
             @breakpoint();
         }
@@ -702,11 +787,56 @@ pub fn default_panic(msg: []const u8, error_return_trace: ?*StackTrace) noreturn
             }
         },
         .wasi => {
-            std.debug.warn("{s}", .{msg});
+            std.debug.print("{s}", .{msg});
             std.os.abort();
         },
         .uefi => {
-            // TODO look into using the debug info and logging helpful messages
+            const uefi = std.os.uefi;
+
+            const ExitData = struct {
+                pub fn create_exit_data(exit_msg: []const u8, exit_size: *usize) ![*:0]u16 {
+                    // Need boot services for pool allocation
+                    if (uefi.system_table.boot_services == null) {
+                        return error.BootServicesUnavailable;
+                    }
+
+                    // ExitData buffer must be allocated using boot_services.allocatePool
+                    var utf16: []u16 = try uefi.raw_pool_allocator.alloc(u16, 256);
+                    errdefer uefi.raw_pool_allocator.free(utf16);
+
+                    if (exit_msg.len > 255) {
+                        return error.MessageTooLong;
+                    }
+
+                    var fmt: [256]u8 = undefined;
+                    var slice = try std.fmt.bufPrint(&fmt, "\r\nerr: {s}\r\n", .{exit_msg});
+
+                    var len = try std.unicode.utf8ToUtf16Le(utf16, slice);
+
+                    utf16[len] = 0;
+
+                    exit_size.* = 256;
+
+                    return @ptrCast([*:0]u16, utf16.ptr);
+                }
+            };
+
+            var exit_size: usize = 0;
+            var exit_data = ExitData.create_exit_data(msg, &exit_size) catch null;
+
+            if (exit_data) |data| {
+                if (uefi.system_table.std_err) |out| {
+                    _ = out.setAttribute(uefi.protocols.SimpleTextOutputProtocol.red);
+                    _ = out.outputString(data);
+                    _ = out.setAttribute(uefi.protocols.SimpleTextOutputProtocol.white);
+                }
+            }
+
+            if (uefi.system_table.boot_services) |bs| {
+                _ = bs.exit(uefi.handle, .Aborted, exit_size, exit_data);
+            }
+
+            // Didn't have boot_services, just fallback to whatever.
             std.os.abort();
         },
         else => {
@@ -714,6 +844,27 @@ pub fn default_panic(msg: []const u8, error_return_trace: ?*StackTrace) noreturn
             std.debug.panicImpl(error_return_trace, first_trace_addr, msg);
         },
     }
+}
+
+pub fn panicUnwrapError(st: ?*StackTrace, err: anyerror) noreturn {
+    @setCold(true);
+    std.debug.panicExtra(st, "attempt to unwrap error: {s}", .{@errorName(err)});
+}
+
+pub fn panicOutOfBounds(index: usize, len: usize) noreturn {
+    @setCold(true);
+    std.debug.panic("attempt to index out of bound: index {d}, len {d}", .{ index, len });
+}
+
+pub noinline fn returnError(maybe_st: ?*StackTrace) void {
+    @setCold(true);
+    const st = maybe_st orelse return;
+    addErrRetTraceAddr(st, @returnAddress());
+}
+
+pub inline fn addErrRetTraceAddr(st: *StackTrace, addr: usize) void {
+    st.instruction_addresses[st.index & (st.instruction_addresses.len - 1)] = addr;
+    st.index +%= 1;
 }
 
 const std = @import("std.zig");
