@@ -120,6 +120,19 @@ $ZIG_GIT_SRC/build-release/bin/zig run backfill.zig -- records.csv $ZIG_GIT_SRC 
 This will check out each commit one-by-one and run `collect-measurements.zig`,
 updating `records.csv` with the new rows.
 
+Here is a handy git CLI snippet for generating queue.txt:
+
+```
+git log --first-parent --format=format:%H start..end
+```
+
+This one will update queue.txt to be the next set of commits since the last
+time the backfill script was run:
+
+```
+git log $(head -n1 ~/gotta-go-fast/queue.txt)..origin/master --first-parent --format=format:%H > ~/gotta-go-fast/queue.txt
+```
+
 ## Adding a Benchmark
 
 First add an entry in `manifest.json`. Next, you can test it like this:
@@ -140,4 +153,3 @@ Handy to copy paste to start a new table.
 ```csv
 timestamp,benchmark_name,commit_hash,commit_timestamp,zig_version,error_message,samples_taken,wall_time_median,wall_time_mean,wall_time_min,wall_time_max,utime_median,utime_mean,utime_min,utime_max,stime_median,stime_mean,stime_min,stime_max,cpu_cycles_median,cpu_cycles_mean,cpu_cycles_min,cpu_cycles_max,instructions_median,instructions_mean,instructions_min,instructions_max,cache_references_median,cache_references_mean,cache_references_min,cache_references_max,cache_misses_median,cache_misses_mean,cache_misses_min,cache_misses_max,branch_misses_median,branch_misses_mean,branch_misses_min,branch_misses_max,maxrss
 ```
-
