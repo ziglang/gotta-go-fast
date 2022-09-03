@@ -7,7 +7,9 @@ utilization statistics.
 The goal is to prevent performance regressions, and provide understanding
 and exposure to how various code changes affect key measurements.
 
-![](zigfast.png)
+<a href="https://ziglang.org/perf/">View the latest results</a>
+
+<a href="https://ziglang.org/perf/"><img src="zigfast.png" /></a>
 
 ## Strategy
 
