@@ -7,7 +7,15 @@ utilization statistics.
 The goal is to prevent performance regressions, and provide understanding
 and exposure to how various code changes affect key measurements.
 
-![](zigfast.png)
+<h4 align="center">
+    <a href="https://ziglang.org/perf/">
+        See the latest results
+    </a>
+</h4>
+
+<p align="center">
+    <img src="images/gotta_go_fast.png">
+</p>
 
 ## Strategy
 
@@ -16,12 +24,12 @@ master branch commit to [ziglang/zig](https://github.com/ziglang/zig/) and
 executes a series of benchmarks using Linux's performance measurement syscalls
 (the same thing that `perf` does). The machine is a dedicated Hetzner server
 with a AMD Ryzen 9 5950X 16-Core Processor, an NVMe hard drive, Linux kernel
-5.14.14-arch1-1. See more CPU details below in the [[CPU Details]] section.
+5.14.14-arch1-1. See more details below in the [CPU Details section](README.md#cpu-details).
 
 The measurements are stored in a CSV file which is atomically swapped with
-updated data when a new benchmark completes. After a new benchmark row is added
-to the dataset, it is pushed to `https://ziglang.org/perf/data.csv`. The
-static HTML + JavaScript at https://ziglang.org/perf/ loads `data.csv` and
+updated records when a new benchmark completes. After a new benchmark row is added
+to the dataset, it is pushed to `https://ziglang.org/perf/records.csv`. The
+static HTML + JavaScript at https://ziglang.org/perf/ loads `records.csv` and
 presents it in interactive graph form.
 
 Each benchmark gets a fixed amount of time allocated: 5 seconds per benchmark.
@@ -83,14 +91,14 @@ power management: ts ttp tm hwpstate cpb eff_freq_ro [13] [14]
 ## Instructions for the CI Script
 
 These measurements should only be taken for a Zig compiler that has passed the
-full test suite, and the `$ZIG` command should be a release build matching the
+full test suite, and the `$ZIG_EXE` command should be a release build matching the
 git commit of `$COMMIT_SHA1`. `$COMMIT_TIMESTAMP` is required to be in the format
 given by `--pretty=format:%at`.
 
 After cloning this repository:
 
 ```
-$ZIG run collect-measurements.zig -- records.csv $ZIG $COMMIT_SHA1 $COMMIT_TIMESTAMP
+$ZIG_EXE build -- records.csv $ZIG_EXE $COMMIT_SHA1 $COMMIT_TIMESTAMP
 ```
 
 This will add 1 row per benchmark to `records.csv` for the specified commit.
@@ -109,28 +117,28 @@ ninja install
 
 This `ninja install` creates `stage1/bin/zig` which is left untouched, and then
 `ninja` (without the install argument) is used for older zig versions when going
-through the queue.
+through the commits.
 
-`queue.txt` is a file containing whitespace-separated git commit hashes.
+`commits.txt` is a file containing whitespace-separated git commit hashes.
 
 ```
-$ZIG_GIT_SRC/build-release/bin/zig run backfill.zig -- records.csv $ZIG_GIT_SRC queue.txt
+$ZIG_GIT_SRC/build-backfill/stage3/bin/zig build -Dbackfill -- records.csv $ZIG_GIT_SRC commits.txt
 ```
 
 This will check out each commit one-by-one and run `collect-measurements.zig`,
 updating `records.csv` with the new rows.
 
-Here is a handy git CLI snippet for generating queue.txt:
+Here is a handy git CLI snippet for generating commits.txt:
 
 ```
 git log --first-parent --format=format:%H start..end
 ```
 
-This one will update queue.txt to be the next set of commits since the last
+This one will update commits.txt to be the next set of commits since the last
 time the backfill script was run:
 
 ```
-git log $(head -n1 ~/gotta-go-fast/queue.txt)..origin/master --first-parent --format=format:%H > ~/gotta-go-fast/queue.txt
+git log $(head -n1 ~/gotta-go-fast/commits.txt)..origin/master --first-parent --format=format:%H > ~/gotta-go-fast/commits.txt
 ```
 
 ## Adding a Benchmark
@@ -138,11 +146,10 @@ git log $(head -n1 ~/gotta-go-fast/queue.txt)..origin/master --first-parent --fo
 First add an entry in `manifest.json`. Next, you can test it like this:
 
 ```
-cd benchmarks/foo
-zig run ../../bench.zig --pkg-begin app bar.zig --pkg-end -O ReleaseFast -- zig
+$ZIG_EXE run ./src/bench.zig -O ReleaseFast --deps app --mod app::$NEW_BENCH_MAIN_PATH -- $ZIG_EXE
 ```
 
-Use an absolute path for the ending `zig` argument which is in a subdirectory
+Use an absolute path for the ending `$ZIG_EXE` argument which is in a subdirectory
 of the zig source tree used to build the zig binary. Some of the benchmarks
 want to learn the zig source checkout path in order to test stuff.
 
