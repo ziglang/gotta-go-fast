@@ -26,9 +26,11 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const zig_exe = std.mem.sliceTo(std.os.argv[1], 0);
+    const zig_src_root = zig_exe[0 .. std.mem.indexOf(u8, zig_exe, "zig/").? + 3];
 
-    var options = Options{ .zig_exe = zig_exe, .zig_src_root = zig_exe };
+    var options = Options{ .zig_exe = zig_exe, .zig_src_root = zig_src_root };
     const context = try app.setup(allocator, &options);
+
     const results = bench(options, app.run, .{ allocator, context });
     try std.json.stringify(results, std.json.StringifyOptions{}, std.io.getStdOut().writer());
 }
