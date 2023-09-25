@@ -21,9 +21,9 @@ pub fn setup(gpa: std.mem.Allocator, options: *bench.Options) !Context {
 
 pub fn run(gpa: std.mem.Allocator, context: Context) !void {
     return bench.exec(gpa, &.{
-        context.zig_exe,            "build",
-        "--build-file",             context.build_file_path,
-        "-p",                       OUTPUT_DIR,
-        "-Dskip-install-lib-files",
+        context.zig_exe, "build",
+        "--build-file",  context.build_file_path,
+        "-p",            OUTPUT_DIR,
+        "-Dno-lib",
     }, .{});
 }
